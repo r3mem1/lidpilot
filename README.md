@@ -1,0 +1,145 @@
+# LeadPilot — этапы 1–3
+
+Реализовано строго по ТЗ v1.0, раздел 20.
+
+**Этап 1 «Локальное ядро»:** FastAPI-ядро, конфигурация через `.env`,
+БД (SQLite на разработке / PostgreSQL в production), регистрация и авторизация,
+роли OWNER / MANAGER / ADMIN с проверкой `business_id` на каждом защищённом
+endpoint, компании и услуги.
+
+**Этап 2 «AI pipeline»:** модуль `ai/` — нормализация, классификация intent и
+priority (правила + LLM), контекст бизнеса из БД, генерация ответа только по
+данным компании, структурированная проверка ответа и эскалации раздела 6.7.
+LLM работает через OpenRouter: в `.env` достаточно задать `AI_API_KEY` и
+`AI_MODEL` (например `openai/gpt-4o-mini`) при `AI_PROVIDER=openrouter`; другой
+OpenAI-совместимый сервис — `AI_PROVIDER=openai_compatible` + `AI_API_BASE_URL`.
+Режим `AI_PROVIDER=stub` позволяет работать локально без ключа.
+
+**Этап 3 «Telegram»:** webhook `POST /webhooks/telegram` (проверка `secret_token`),
+идемпотентное сохранение сообщений, обработка AI, отправка ответов, подключение
+бота компании, повторная обработка после сбоев.
+
+Лиды и ручной ответ менеджера (этап 4), кабинет (этап 5) и панель ADMIN (этап 6)
+не реализованы — в проекте присутствуют только файлы структуры Приложения A
+с объявленными контрактами.
+
+## Запуск
+
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # вставить в JWT_SECRET
+# для локального HTTP выставить AUTH_COOKIE_SECURE=false
+
+alembic upgrade head          # миграции схемы
+uvicorn main:app --reload     # http://127.0.0.1:8000/docs
+```
+
+Первый администратор платформы (роль ADMIN) создаётся при старте из
+`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`; через публичную
+регистрацию роль ADMIN получить нельзя.
+
+Быстрый старт без Alembic (только локально): `AUTO_CREATE_TABLES=true`.
+
+## Проверка
+
+```bash
+pip install httpx
+python smoke_test.py       # 80 проверок этапа 1: роли, изоляция компаний, аудит, rate limit
+python smoke_test_ai.py    # 141 проверка этапа 2: классификация, валидатор, эскалации, логи
+python smoke_test_stage3.py  # 139 проверок этапа 3: webhook, идемпотентность, сбои, изоляция
+```
+
+Скрипты — вспомогательные, частью приложения не являются. Сеть не нужна:
+Telegram подменяется `httpx.MockTransport`, LLM — офлайн-режимом.
+
+## AI pipeline (этап 2)
+
+```
+сообщение → normalize → intent + priority → контекст компании из БД
+          → генерация ответа → валидация → SEND либо ESCALATE
+```
+
+Ответ уходит клиенту только если прошёл валидатор. Диалог передаётся менеджеру
+при жалобе, запросе записи, нехватке данных, спаме, ошибке LLM API и при любом
+нарушении проверки (раздел 6.7 ТЗ).
+
+Валидатор сверяет ответ с БД: денежные суммы должны существовать в прайсе
+(или быть суммой реальных цен), запрещены обещания записи и свободного времени,
+необъявленные скидки, чужие телефоны и адреса, утечка инструкций.
+
+Проверить настройки AI без Telegram (включив `AI_PREVIEW_ENABLED=true`):
+
+```bash
+curl -X POST http://127.0.0.1:8000/businesses/1/ai/preview \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"text": "Сколько стоит стрижка и борода?"}'
+```
+
+## Telegram (этап 3)
+
+1. Создайте бота у `@BotFather`, получите токен.
+2. Нужен публичный HTTPS-адрес: в production — адрес хостинга, локально —
+   `cloudflared tunnel --url http://localhost:8000` (или ngrok). Впишите его в
+   `PUBLIC_BASE_URL` в `.env`.
+3. Владелец компании подключает бота (токен вводится один раз и хранится в БД
+   зашифрованным, в `.env` его нет):
+
+```bash
+curl -X POST http://127.0.0.1:8000/businesses/1/integrations/telegram \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"bot_token": "123456:ABC..."}'
+```
+
+Приложение проверит токен (`getMe`), сохранит интеграцию и зарегистрирует webhook
+с секретным заголовком `X-Telegram-Bot-Api-Secret-Token`. Сообщения клиента
+сохраняются в БД до любых внешних вызовов; ответ AI (или безопасный ответ при
+передаче менеджеру) отправляется после ответа Telegram. Сбой AI, БД или Telegram
+не теряет сообщение: оно обрабатывается повторно фоновым циклом
+(`REPROCESS_INTERVAL_SECONDS`), а после `MESSAGE_MAX_ATTEMPTS` неудач диалог
+получает статус «требует внимания».
+
+| Метод  | Путь                                         | Доступ                               |
+|--------|----------------------------------------------|--------------------------------------|
+| POST   | `/webhooks/telegram`                         | Telegram (секретный заголовок)       |
+| GET    | `/businesses/{id}/conversations`             | OWNER, MANAGER, ADMIN; фильтры `status`, `priority`, `date_from`, `date_to` |
+| GET    | `/conversations/{id}`                        | OWNER, MANAGER, ADMIN                |
+| GET    | `/businesses/{id}/integrations`              | OWNER, ADMIN (вне §11)               |
+| POST   | `/businesses/{id}/integrations/telegram`     | OWNER, ADMIN (вне §11)               |
+| DELETE | `/businesses/{id}/integrations/telegram`     | OWNER, ADMIN (вне §11)               |
+
+## Endpoints этапа 1 (раздел 11 ТЗ)
+
+| Метод  | Путь                                | Доступ                     |
+|--------|-------------------------------------|----------------------------|
+| POST   | `/auth/register`                    | публичный                  |
+| POST   | `/auth/login`                       | публичный                  |
+| POST   | `/auth/logout`                      | любой вошедший             |
+| GET    | `/me`                               | любой вошедший             |
+| POST   | `/businesses`                       | любой вошедший             |
+| GET    | `/businesses/{id}`                  | OWNER, MANAGER, ADMIN      |
+| PUT    | `/businesses/{id}`                  | OWNER, ADMIN               |
+| GET    | `/businesses/{id}/services`         | OWNER, MANAGER, ADMIN      |
+| POST   | `/businesses/{id}/services`         | OWNER, ADMIN               |
+| PUT    | `/services/{id}`                    | OWNER, ADMIN               |
+| DELETE | `/services/{id}`                    | OWNER, ADMIN               |
+| GET    | `/businesses/{id}/members`          | OWNER, ADMIN               |
+| POST   | `/businesses/{id}/members`          | OWNER, ADMIN               |
+| POST   | `/businesses/{id}/ai/preview`       | OWNER, ADMIN; только при `AI_PREVIEW_ENABLED=true` |
+| GET    | `/health`, `/`                      | публичный                  |
+
+Данные другой компании недоступны: при отсутствии записи в `business_members`
+возвращается `404` (не `403`), чтобы перебором id нельзя было узнать состав
+компаний в системе. Попытка такого доступа пишется в `system_logs`.
+
+## Структура
+
+Соответствует Приложению A ТЗ. Добавлено сверх приложения:
+`services/access_service.py` (RBAC-зависимости), `services/auth_service.py`,
+`services/rate_limit_service.py`, `services/ai_service.py` (AI Service
+раздела 8), `ai/context.py`, `ai/prompts.py`, `ai/llm_client.py`,
+`ai/pipeline.py`, `services/integration_service.py`, `services/secret_store.py`,
+`routes/integrations.py`, `alembic.ini` + `migrations/`, `.env.example`, `.gitignore`,
+`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`.

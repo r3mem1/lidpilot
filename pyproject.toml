@@ -1,0 +1,28 @@
+# Только конфигурация инструментов — проект не пакетируется.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+# E/F — pycodestyle/pyflakes, I — сортировка импортов, B — bugbear, S — bandit-правила, UP — pyupgrade, SIM — упрощения
+select = ["E", "F", "I", "B", "S", "UP", "SIM"]
+ignore = ["E501", "UP042"]  # E501: длину держит formatter; UP042: `class X(str, Enum)` — принятый в проекте стиль
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI-зависимости в значениях по умолчанию — штатный приём, не ошибка B008
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Path", "fastapi.Query", "fastapi.Body", "fastapi.Header", "fastapi.Cookie"]
+
+[tool.ruff.lint.per-file-ignores]
+"smoke_test*.py" = ["S101", "S105", "S106", "S107"]  # assert и тестовые пароли допустимы
+# Depends(require_business_roles(...)) — штатная фабрика зависимостей FastAPI (см. access_service)
+"routes/*.py" = ["B008"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+include = ["ai", "integrations", "routes", "services", "main.py", "config.py", "database.py", "models.py", "schemas.py"]
+typeCheckingMode = "basic"
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]

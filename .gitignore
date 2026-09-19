@@ -1,0 +1,17 @@
+# Секреты (раздел 16 ТЗ: .env не попадает в репозиторий)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Локальная БД разработки
+*.db
+*.sqlite3
+
+# Локальные настройки Claude Code и кэши
+.claude/settings.local.json
+.ruff_cache/
+.pytest_cache/

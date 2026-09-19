@@ -1,0 +1,13 @@
+# LeadPilot — инструменты разработки (в production не ставятся).
+# Отдельные CLI (ruff, pyright, bandit, mypy, pip-audit, semgrep) уже установлены глобально через `uv tool install`;
+# этот файл нужен для воспроизводимости на другой машине/в CI.
+-r requirements.txt
+
+httpx>=0.27,<1.0         # smoke-тесты (TestClient)
+pytest>=8.0,<9.0         # запуск тестов следующих этапов
+pytest-cov>=5.0
+ruff>=0.6
+pyright>=1.1.380
+bandit>=1.7
+pip-audit>=2.7
+tzdata; sys_platform == "win32"   # Alembic (timezone=UTC в alembic.ini) на Windows
