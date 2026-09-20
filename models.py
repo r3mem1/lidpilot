@@ -285,6 +285,19 @@ class LeadPriority(str, enum.Enum):
     COLD = "COLD"
 
 
+class LeadStatus(str, enum.Enum):
+    """Статус лида (раздел 14: «изменение статуса лида», «отметка решено»)."""
+
+    NEW = "NEW"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"  # решено
+    LOST = "LOST"  # клиент не дошёл до услуги
+
+    @property
+    def is_closed(self) -> bool:
+        return self in (LeadStatus.RESOLVED, LeadStatus.LOST)
+
+
 class SenderType(str, enum.Enum):
     """Отправитель сообщения (раздел 10: messages.sender_type)."""
 
@@ -401,6 +414,9 @@ class Conversation(Base):
     )
     # Почему диалог требует внимания (EscalationReason либо DELIVERY_FAILED и т.п.).
     attention_reason: Mapped[str | None] = mapped_column(String(64))
+    # Менеджер вмешался вручную: AI больше не отвечает клиенту в этом диалоге
+    # до отметки «решено» (раздел 14, раздел 19: без полностью автономного AI).
+    handled_by_manager: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -445,6 +461,10 @@ class Message(Base):
     # "text" | "attachment": вложения AI не видит, такое сообщение решает человек.
     content_type: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
     intent: Mapped[str | None] = mapped_column(String(32))
+    # Кто из сотрудников написал ответ (sender_type = MANAGER), раздел 16: аудит.
+    author_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, index=True
     )
@@ -495,4 +515,45 @@ class AiResponse(Base):
     details: Mapped[dict | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Этап 4: лиды (разделы 6.5, 10, 11, 14)
+# --------------------------------------------------------------------------- #
+class Lead(Base):
+    """Лид — обращение, которым занимается менеджер (раздел 10: leads).
+
+    Один лид на диалог (UNIQUE). business_id и поля intent/updated_at добавлены
+    к разделу 10: фильтрация по компании напрямую (раздел 16) и история изменений.
+    reason хранит причину классификации (раздел 6.5).
+    """
+
+    __tablename__ = "leads"
+    __table_args__ = (UniqueConstraint("conversation_id", name="uq_leads_conversation"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[LeadStatus] = enum_column(
+        LeadStatus, nullable=False, default=LeadStatus.NEW, index=True
+    )
+    priority: Mapped[LeadPriority] = enum_column(
+        LeadPriority, nullable=False, default=LeadPriority.COLD, index=True
+    )
+    intent: Mapped[str | None] = mapped_column(String(32))
+    reason: Mapped[str | None] = mapped_column(Text)
+    # Ответственный менеджер. Должен быть участником этой же компании.
+    assigned_to: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )

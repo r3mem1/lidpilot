@@ -25,6 +25,8 @@ from models import (
     Business,
     BusinessMember,
     Conversation,
+    Customer,
+    Lead,
     LogLevel,
     MemberRole,
     Service,
@@ -248,5 +250,48 @@ def require_conversation_access(*allowed: MemberRole):
             raise
         _assert_role(ctx, allowed)
         return conversation, ctx
+
+    return dependency
+
+
+def _load_child(db: Session, user: User, model, item_id: int, label: str, allowed):
+    """Общая загрузка для /leads/{id} и /customers/{id}: business_id берётся из
+    самой записи и проходит ту же проверку членства; чужое = несуществующее (404)."""
+    not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} не найден")
+    item = db.get(model, item_id)
+    if item is None:
+        raise not_found
+    try:
+        ctx = build_business_context(db, user, item.business_id)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            raise not_found from exc
+        raise
+    _assert_role(ctx, allowed)
+    return item, ctx
+
+
+def require_lead_access(*allowed: MemberRole):
+    """Для /leads/{lead_id}."""
+
+    def dependency(
+        lead_id: int = Path(..., ge=1),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> tuple[Lead, BusinessContext]:
+        return _load_child(db, user, Lead, lead_id, "Лид", allowed)
+
+    return dependency
+
+
+def require_customer_access(*allowed: MemberRole):
+    """Для /customers/{customer_id}."""
+
+    def dependency(
+        customer_id: int = Path(..., ge=1),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> tuple[Customer, BusinessContext]:
+        return _load_child(db, user, Customer, customer_id, "Клиент", allowed)
 
     return dependency

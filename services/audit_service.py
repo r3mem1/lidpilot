@@ -61,6 +61,12 @@ class EventType:
     MESSAGE_SENT: Final = "MESSAGE_SENT"
     MESSAGE_SEND_FAILED: Final = "MESSAGE_SEND_FAILED"
 
+    # CRM-ядро (этап 4, разделы 14, 17)
+    LEAD_CREATED: Final = "LEAD_CREATED"
+    LEAD_UPDATED: Final = "LEAD_UPDATED"
+    MANAGER_REPLY: Final = "MANAGER_REPLY"
+    CONVERSATION_RESOLVED: Final = "CONVERSATION_RESOLVED"
+
     # Безопасность
     ACCESS_DENIED: Final = "ACCESS_DENIED"
 

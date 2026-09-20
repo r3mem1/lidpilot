@@ -19,8 +19,11 @@ OpenAI-совместимый сервис — `AI_PROVIDER=openai_compatible` +
 идемпотентное сохранение сообщений, обработка AI, отправка ответов, подключение
 бота компании, повторная обработка после сбоев.
 
-Лиды и ручной ответ менеджера (этап 4), кабинет (этап 5) и панель ADMIN (этап 6)
-не реализованы — в проекте присутствуют только файлы структуры Приложения A
+**Этап 4 «CRM-ядро»:** лиды создаются автоматически по классификации (приоритет
+HOT/WARM/COLD, причина, статус, ответственный), ручной ответ менеджера клиенту в
+Telegram, отметка «решено», клиенты и история их обращений.
+
+Кабинет (этап 5) и панель ADMIN (этап 6) не реализованы — в проекте присутствуют только файлы структуры Приложения A
 с объявленными контрактами.
 
 ## Запуск
@@ -50,7 +53,11 @@ pip install httpx
 python smoke_test.py       # 80 проверок этапа 1: роли, изоляция компаний, аудит, rate limit
 python smoke_test_ai.py    # 141 проверка этапа 2: классификация, валидатор, эскалации, логи
 python smoke_test_stage3.py  # 139 проверок этапа 3: webhook, идемпотентность, сбои, изоляция
+python smoke_test_stage4.py  # 121 проверка этапа 4: лиды, ручной ответ, «решено», клиенты
 ```
+
+Пошаговая инструкция ручной проверки (Swagger, OpenRouter, настоящий Telegram) —
+[docs/manual-check.md](docs/manual-check.md); журнал событий: `python scripts/show_logs.py`.
 
 Скрипты — вспомогательные, частью приложения не являются. Сеть не нужна:
 Telegram подменяется `httpx.MockTransport`, LLM — офлайн-режимом.
@@ -110,6 +117,32 @@ curl -X POST http://127.0.0.1:8000/businesses/1/integrations/telegram \
 | POST   | `/businesses/{id}/integrations/telegram`     | OWNER, ADMIN (вне §11)               |
 | DELETE | `/businesses/{id}/integrations/telegram`     | OWNER, ADMIN (вне §11)               |
 
+## CRM-ядро (этап 4)
+
+**Лиды.** Каждое обращение клиента (кроме спама) становится лидом: один лид на диалог.
+Приоритет внутри открытого диалога только растёт — «горячая» запись не остывает от
+следующего сообщения «спасибо». Причина классификации хранится в лиде.
+
+**Рабочее место менеджера.** Менеджер отвечает клиенту через API; после его ответа
+**AI перестаёт отвечать в этом диалоге** и не перебивает человека — новые сообщения клиента
+сохраняются, а диалог получает статус «требует внимания» (`CUSTOMER_REPLIED`). Кнопка
+«решено» закрывает диалог и лид; следующее сообщение клиента открывает новый диалог, и AI
+снова отвечает. Статусы лида: `NEW → IN_PROGRESS → RESOLVED | LOST`; закрытие лида
+закрывает диалог, возврат в работу — переоткрывает.
+
+| Метод  | Путь                                      | Доступ                    |
+|--------|-------------------------------------------|---------------------------|
+| GET    | `/businesses/{id}/leads`                  | OWNER, MANAGER, ADMIN; фильтры `priority`, `status`, `assigned_to`, `unassigned`, `date_from`, `date_to`, `limit`, `offset`; сначала горячие |
+| PATCH  | `/leads/{id}`                             | OWNER, MANAGER, ADMIN (вне §11, раздел 14): `status`, `assigned_to` |
+| POST   | `/conversations/{id}/reply`               | OWNER, MANAGER, ADMIN; тело `{"text": "..."}` |
+| POST   | `/conversations/{id}/resolve`             | OWNER, MANAGER, ADMIN (вне §11, раздел 14) |
+| GET    | `/businesses/{id}/customers`              | OWNER, MANAGER, ADMIN (вне §11, раздел 13); `search`, `limit`, `offset` |
+| GET    | `/customers/{id}`                         | OWNER, MANAGER, ADMIN (вне §11, раздел 13): история обращений |
+
+Ответ на `reply` возвращается со статусом 201, когда сообщение **сохранено**; результат
+отправки показывает `delivery_status`: `SENT`, `PENDING` (временный сбой Telegram — повторит
+фоновый цикл) или `FAILED` (например, клиент заблокировал бота).
+
 ## Endpoints этапа 1 (раздел 11 ТЗ)
 
 | Метод  | Путь                                | Доступ                     |
@@ -141,5 +174,5 @@ curl -X POST http://127.0.0.1:8000/businesses/1/integrations/telegram \
 `services/rate_limit_service.py`, `services/ai_service.py` (AI Service
 раздела 8), `ai/context.py`, `ai/prompts.py`, `ai/llm_client.py`,
 `ai/pipeline.py`, `services/integration_service.py`, `services/secret_store.py`,
-`routes/integrations.py`, `alembic.ini` + `migrations/`, `.env.example`, `.gitignore`,
-`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`.
+`routes/integrations.py`, `services/lead_service.py`, `alembic.ini` + `migrations/`, `.env.example`, `.gitignore`,
+`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`, `smoke_test_stage4.py`.

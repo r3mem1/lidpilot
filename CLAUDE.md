@@ -30,7 +30,8 @@ templates/ static/   кабинет (Jinja2)
    (по `external_message_id`/`update_id`), повторная обработка безопасна.
 5. **Аудит и логи (§16–17):** каждое значимое событие → `system_logs` через `audit_service`; по логам должно быть видно,
    что случилось с конкретным сообщением и почему отправлен именно этот ответ.
-6. Роль проверяется на **каждом** защищённом endpoint; `/admin/*` — только ADMIN (`require_platform_admin`); ADMIN не создаётся публичной регистрацией.
+6. После ручного ответа менеджера AI молчит в диалоге до «решено» (`conversations.handled_by_manager`); приоритет лида внутри открытого диалога не понижается.
+7. Роль проверяется на **каждом** защищённом endpoint; `/admin/*` — только ADMIN (`require_platform_admin`); ADMIN не создаётся публичной регистрацией.
 
 ## Статус этапов (§20)
 | Этап | Состояние |
@@ -38,7 +39,7 @@ templates/ static/   кабинет (Jinja2)
 | 1 Локальное ядро (auth, RBAC, компании, услуги) | ✅ реализован, `smoke_test.py` |
 | 2 AI pipeline | ✅ реализован, `smoke_test_ai.py` |
 | 3 Telegram (webhook, отправка) | ✅ реализован, `smoke_test_stage3.py` |
-| 4 CRM-ядро (лиды, статусы, ручной ответ, фильтры) | ⏳ таблицы customers/conversations/messages/ai_responses уже есть (этап 3); нет `leads`, `POST /conversations/{id}/reply`, смены статусов |
+| 4 CRM-ядро (лиды, статусы, ручной ответ, фильтры) | ✅ реализован, `smoke_test_stage4.py` |
 | 5 Кабинет бизнеса (dashboard, сообщения, услуги, настройки, аналитика) | ⏳ шаблоны-заготовки |
 | 6 Admin-панель | ⏳ `routes/admin.py` пуст |
 | 7–9 Пилот, SaaS-автоматизация, масштабирование | — |
@@ -54,6 +55,7 @@ uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
 python smoke_test_ai.py                # 141 проверка этапа 2
 python smoke_test_stage3.py            # 139 проверок этапа 3
+python smoke_test_stage4.py            # 121 проверка этапа 4
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
 bandit -r . -x ./migrations,./smoke_test.py,./smoke_test_ai.py   # SAST

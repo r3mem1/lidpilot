@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -48,6 +48,7 @@ from models import (
     Customer,
     DeliveryStatus,
     Integration,
+    Lead,
     LeadPriority,
     LogLevel,
     Message,
@@ -55,7 +56,13 @@ from models import (
     SenderType,
     utcnow,
 )
-from services import ai_service, audit_service, integration_service, secret_store
+from services import (
+    ai_service,
+    audit_service,
+    integration_service,
+    lead_service,
+    secret_store,
+)
 from services.access_service import BusinessContext
 
 logger = logging.getLogger("leadpilot.messages")
@@ -380,6 +387,25 @@ def _run(db: Session, message_id: int) -> None:
         db.commit()
         return
 
+    # Диалог ведёт менеджер (он уже отвечал клиенту вручную): AI молчит, чтобы не
+    # перебивать человека (раздел 14). Сообщение сохранено, менеджер уведомлён
+    # статусом «требует внимания» до отметки «решено».
+    if conversation.handled_by_manager:
+        conversation.status = ConversationStatus.NEEDS_ATTENTION
+        conversation.attention_reason = "CUSTOMER_REPLIED"
+        message.processing_status = ProcessingStatus.DONE
+        message.processing_error = "Диалог ведёт менеджер"
+        _log(
+            db,
+            audit_service.EventType.MESSAGE_SKIPPED,
+            "Диалог ведёт менеджер: AI не отвечает, сообщение ждёт менеджера",
+            business_id=business_id,
+            level=LogLevel.INFO,
+            payload={**log_context, "reason": "MANAGER_HANDLING"},
+        )
+        db.commit()
+        return
+
     history = _load_history(db, conversation_id, message.id)
     ai_text = "" if message.content_type == "attachment" else message.text
     prior_status = conversation.status
@@ -395,7 +421,17 @@ def _run(db: Session, message_id: int) -> None:
 
     classification = result.classification
     message.intent = classification.intent.value
-    conversation.priority = LeadPriority(classification.priority.value)
+    new_priority = LeadPriority(classification.priority.value)
+    # Внутри открытого диалога приоритет не падает: «горячая» запись остаётся горячей.
+    conversation.priority = lead_service.max_priority(conversation.priority, new_priority)
+    lead_service.register_classification(
+        db,
+        conversation,
+        intent=classification.intent.value,
+        priority=new_priority,
+        reason=classification.reason,
+        message_id=message.id,
+    )
 
     escalated = result.decision is Decision.ESCALATE
     if escalated:
@@ -631,8 +667,95 @@ def reprocess_pending(limit: int = 20) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Ручной ответ менеджера (раздел 11: POST /conversations/{id}/reply, раздел 14)
+# --------------------------------------------------------------------------- #
+def send_manager_reply(
+    db: Session, ctx: BusinessContext, conversation: Conversation, text: str
+) -> Message:
+    """Ручной ответ клиенту. conversation уже проверен зависимостью доступа.
+
+    Сначала ответ СОХРАНЯЕТСЯ (PENDING), потом уходит в канал — тот же порядок,
+    что у ответов AI (раздел 18). Побочные эффекты (раздел 14):
+    * диалог переходит к менеджеру: AI больше не отвечает до «решено»;
+    * закрытый диалог и лид переоткрываются;
+    * лид NEW → IN_PROGRESS, первый ответивший становится ответственным.
+    Ошибка доставки не бросается: статус виден в delivery_status сообщения.
+    """
+    lead = lead_service.get_lead_for_conversation(db, conversation.id)
+
+    message = Message(
+        business_id=ctx.business_id,
+        conversation_id=conversation.id,
+        sender_type=SenderType.MANAGER,
+        text=text,
+        content_type="text",
+        author_user_id=ctx.user.id,
+        delivery_status=DeliveryStatus.PENDING,
+    )
+    db.add(message)
+
+    lead_service.reopen_conversation(conversation, lead)
+    conversation.handled_by_manager = True
+    if conversation.status is ConversationStatus.NEEDS_ATTENTION:
+        conversation.status = ConversationStatus.OPEN
+        conversation.attention_reason = None
+    lead_service.assign_if_unassigned(lead, ctx)
+    conversation.updated_at = utcnow()
+    db.flush()
+
+    message_id = message.id
+    audit_service.log_event(
+        db,
+        event_type=audit_service.EventType.MANAGER_REPLY,
+        message="Менеджер ответил клиенту",
+        business_id=ctx.business_id,
+        actor_user_id=ctx.user.id,
+        payload={
+            "message_id": message_id,
+            "conversation_id": conversation.id,
+            "lead_id": lead.id if lead else None,
+        },
+    )
+    db.commit()  # сохранено до обращения к Telegram
+
+    deliver_outgoing(db, message_id)
+    db.expire_all()
+    return db.get_one(Message, message_id)
+
+
+# --------------------------------------------------------------------------- #
 # Чтение диалогов (раздел 11: GET /businesses/{id}/conversations, /conversations/{id})
 # --------------------------------------------------------------------------- #
+def _attach_last_message_and_lead(
+    db: Session, ctx: BusinessContext, rows: list[tuple[Conversation, Customer]]
+) -> list[tuple[Conversation, Customer, Message | None, Lead | None]]:
+    """Последнее сообщение и лид для каждого диалога — двумя запросами, а не N+1."""
+    ids = [conversation.id for conversation, _ in rows]
+    last_by_conversation: dict[int, Message] = {}
+    lead_by_conversation: dict[int, Lead] = {}
+    if ids:
+        newest = (
+            select(func.max(Message.id))
+            .where(Message.conversation_id.in_(ids), Message.business_id == ctx.business_id)
+            .group_by(Message.conversation_id)
+        )
+        for message in db.scalars(select(Message).where(Message.id.in_(newest))):
+            last_by_conversation[message.conversation_id] = message
+        for lead in db.scalars(
+            select(Lead).where(Lead.conversation_id.in_(ids), Lead.business_id == ctx.business_id)
+        ):
+            lead_by_conversation[lead.conversation_id] = lead
+    return [
+        (
+            conversation,
+            customer,
+            last_by_conversation.get(conversation.id),
+            lead_by_conversation.get(conversation.id),
+        )
+        for conversation, customer in rows
+    ]
+
+
 def list_conversations(
     db: Session,
     ctx: BusinessContext,
@@ -643,9 +766,9 @@ def list_conversations(
     date_to: datetime | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> list[tuple[Conversation, Customer, Message | None]]:
+) -> list[tuple[Conversation, Customer, Message | None, Lead | None]]:
     """Диалоги компании (раздел 6.4: фильтры по статусу, приоритету и периоду)
-    вместе с клиентом и последним сообщением. Всегда фильтр по business_id."""
+    с клиентом, последним сообщением и лидом. Всегда фильтр по business_id."""
     stmt = (
         select(Conversation, Customer)
         .join(Customer, Customer.id == Conversation.customer_id)
@@ -664,29 +787,21 @@ def list_conversations(
         .limit(limit)
         .offset(offset)
     ).all()
-
-    items: list[tuple[Conversation, Customer, Message | None]] = []
-    for conversation, customer in rows:
-        last = db.scalar(
-            select(Message)
-            .where(
-                Message.conversation_id == conversation.id,
-                Message.business_id == ctx.business_id,
-            )
-            .order_by(Message.id.desc())
-            .limit(1)
-        )
-        items.append((conversation, customer, last))
-    return items
+    return _attach_last_message_and_lead(db, ctx, [(c, cu) for c, cu in rows])
 
 
 def get_conversation_detail(
     db: Session, ctx: BusinessContext, conversation: Conversation
-) -> tuple[Customer, list[Message], list[AiResponse]]:
+) -> tuple[Customer, Lead | None, list[Message], list[AiResponse]]:
     """Диалог целиком. conversation уже проверен зависимостью доступа."""
     customer = db.get(Customer, conversation.customer_id)
     if customer is None or customer.business_id != ctx.business_id:
         raise RuntimeError("Клиент диалога не найден")
+    lead = db.scalar(
+        select(Lead).where(
+            Lead.conversation_id == conversation.id, Lead.business_id == ctx.business_id
+        )
+    )
     messages = list(
         db.scalars(
             select(Message)
@@ -709,4 +824,57 @@ def get_conversation_detail(
                 .order_by(AiResponse.id)
             )
         )
-    return customer, messages, decisions
+    return customer, lead, messages, decisions
+
+
+# --------------------------------------------------------------------------- #
+# Клиенты и история обращений (раздел 13: «Клиенты», вне минимального списка §11)
+# --------------------------------------------------------------------------- #
+def list_customers(
+    db: Session,
+    ctx: BusinessContext,
+    *,
+    search: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[tuple[Customer, int, datetime | None]]:
+    """Клиенты компании: число обращений и последняя активность."""
+    stmt = (
+        select(Customer, func.count(Conversation.id), func.max(Conversation.updated_at))
+        .outerjoin(Conversation, Conversation.customer_id == Customer.id)
+        .where(Customer.business_id == ctx.business_id)
+        .group_by(Customer.id)
+    )
+    if search and search.strip():
+        raw = search.strip()
+        # SQLite сравнивает без учёта регистра только латиницу, поэтому кириллицу
+        # ищем по нескольким вариантам регистра («иван», «Иван», «ИВАН»).
+        variants = {raw, raw.lower(), raw.upper(), raw.capitalize(), raw.title()}
+        conditions = []
+        for variant in variants:
+            escaped = variant.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            conditions.append(Customer.name.ilike(pattern, escape="\\"))
+            conditions.append(Customer.username.ilike(pattern, escape="\\"))
+        stmt = stmt.where(or_(*conditions))
+    rows = db.execute(
+        stmt.order_by(func.max(Conversation.updated_at).desc(), Customer.id.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    return [(customer, count, last) for customer, count, last in rows]
+
+
+def get_customer_history(
+    db: Session, ctx: BusinessContext, customer: Customer
+) -> list[tuple[Conversation, Customer, Message | None, Lead | None]]:
+    """История обращений клиента: его диалоги, новые сверху. customer уже проверен."""
+    conversations = db.scalars(
+        select(Conversation)
+        .where(
+            Conversation.customer_id == customer.id,
+            Conversation.business_id == ctx.business_id,
+        )
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+    ).all()
+    return _attach_last_message_and_lead(db, ctx, [(c, customer) for c in conversations])

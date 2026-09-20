@@ -197,9 +197,18 @@ def get_settings() -> Settings:
         return Settings()  # pyright: ignore[reportCallIssue]
     except ValidationError as exc:
         # Понятное сообщение вместо трейсбека: чаще всего не задан JWT_SECRET.
+        hint = ""
+        if any(error["loc"] == ("jwt_secret",) for error in exc.errors()):
+            hint = (
+                "\nJWT_SECRET не задан. Создайте файл .env (скопируйте .env.example) и впишите в него\n"
+                "JWT_SECRET=<результат команды>:\n"
+                '  python -c "import secrets; print(secrets.token_urlsafe(48))"\n'
+            )
         raise RuntimeError(
-            "Некорректная конфигурация окружения. Проверьте .env "
-            "(см. .env.example). Детали:\n" + str(exc)
+            "Некорректная конфигурация окружения. Проверьте .env (см. .env.example)."
+            + hint
+            + "Детали:\n"
+            + str(exc)
         ) from exc
 
 

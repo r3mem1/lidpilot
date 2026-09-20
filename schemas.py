@@ -15,7 +15,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from ai.classifier import ClassificationSource, Intent, Priority
 from ai.context import HistoryRole
@@ -29,6 +37,7 @@ from models import (
     DeliveryStatus,
     IntegrationStatus,
     LeadPriority,
+    LeadStatus,
     LogLevel,
     MemberRole,
     ProcessingStatus,
@@ -285,7 +294,9 @@ class MessageOut(ORMModel):
     content_type: str
     intent: str | None
     delivery_status: DeliveryStatus | None
+    delivery_error: str | None = None
     processing_status: ProcessingStatus | None
+    author_user_id: int | None = None
     created_at: datetime
 
 
@@ -313,6 +324,22 @@ class ConversationOut(ORMModel):
     status: ConversationStatus
     priority: LeadPriority
     attention_reason: str | None
+    handled_by_manager: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class LeadOut(ORMModel):
+    """Лид (раздел 10): приоритет, причина классификации, ответственный."""
+
+    id: int
+    business_id: int
+    conversation_id: int
+    status: LeadStatus
+    priority: LeadPriority
+    intent: str | None
+    reason: str | None
+    assigned_to: int | None
     created_at: datetime
     updated_at: datetime
 
@@ -321,10 +348,69 @@ class ConversationListItem(BaseModel):
     conversation: ConversationOut
     customer: CustomerOut
     last_message: MessageOut | None = None
+    lead: LeadOut | None = None
 
 
 class ConversationDetail(BaseModel):
     conversation: ConversationOut
     customer: CustomerOut
+    lead: LeadOut | None = None
     messages: list[MessageOut]
     ai_decisions: list[AiDecisionOut]
+
+
+# --------------------------------------------------------------------------- #
+# CRM-ядро (этап 4): лиды, ручной ответ, клиенты
+# --------------------------------------------------------------------------- #
+class LeadListItem(BaseModel):
+    lead: LeadOut
+    conversation: ConversationOut
+    customer: CustomerOut
+
+
+class LeadUpdate(BaseModel):
+    """PATCH /leads/{id} (раздел 14). Передаются только меняемые поля;
+    assigned_to=null снимает ответственного, отсутствие поля — не трогает."""
+
+    status: LeadStatus | None = None
+    assigned_to: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _status_not_null(self) -> LeadUpdate:
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("status не может быть null")
+        return self
+
+
+class ReplyRequest(BaseModel):
+    """Ручной ответ менеджера клиенту (раздел 11: POST /conversations/{id}/reply)."""
+
+    text: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("text")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Текст ответа не может быть пустым")
+        return value.strip()
+
+
+class CustomerListItem(BaseModel):
+    customer: CustomerOut
+    conversations_count: int
+    last_activity_at: datetime | None = None
+
+
+class CustomerDetail(BaseModel):
+    """Клиент и история его обращений (раздел 13: «Клиенты: история обращений»)."""
+
+    customer: CustomerOut
+    created_at: datetime
+    conversations: list[ConversationListItem]
+
+
+class ConversationState(BaseModel):
+    """Диалог и его лид после изменения (например, «решено»)."""
+
+    conversation: ConversationOut
+    lead: LeadOut | None = None
