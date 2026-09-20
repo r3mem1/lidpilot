@@ -65,6 +65,15 @@ bandit -r . -x ./migrations,./smoke_test.py,./smoke_test_ai.py   # SAST
 pip-audit -r requirements.txt          # уязвимости зависимостей
 ```
 Тесты — самодостаточные скрипты `smoke_test*.py` (httpx + временная SQLite). Новый этап = новый `smoke_test_stageN.py` в том же стиле.
+**Запускать тесты через `python scripts/run_checks.py [stage4 …]`** — выводит только «ИТОГО» и упавшие проверки; полный вывод в `.test_logs/*.log`
+(открывать лог только при падении и нужен контекст). Голые `python smoke_test*.py` — только если нужен полный вывод.
+
+## Экономия токенов (без потери качества проверок)
+- Не читать целиком `README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`, `services/message_service.py`: сначала Grep, затем Read с `offset/limit`.
+- Широкий поиск «где что реализовано» — субагенту `Explore`; в основной контекст возвращать выводы, а не дампы файлов.
+- Не перечитывать файл после Edit; независимые вызовы инструментов — параллельно, одним сообщением.
+- Не читать `.env`, `*.db`, `static/fonts/`, кэши (закрыто в `permissions.deny`); БД смотреть через MCP `sqlite` с точечным SELECT.
+- Проверки (ruff/pyright/bandit) запускать на изменённых файлах, полный прогон — перед коммитом и закрытием этапа.
 
 ## Соглашения кода
 - Комментарии и docstring — на русском, с указанием раздела ТЗ; имена — английские; `from __future__ import annotations`.
@@ -76,6 +85,7 @@ pip-audit -r requirements.txt          # уязвимости зависимос
 - **Агенты** (`.claude/agents/`): `leadpilot-architect`, `backend-developer`, `ai-pipeline-engineer`, `telegram-integration-engineer`,
   `cabinet-frontend-developer`, `security-reviewer`, `qa-tester`, `spec-reviewer`.
 - **Скиллы** (`.claude/skills/`): `tenant-isolation-check`, `ai-guardrails-check`, `telegram-webhook`, `add-endpoint`, `acceptance-check`, `stage-runbook`.
-- **Плагины** (project scope): pyright-lsp, code-review, pr-review-toolkit, security-guidance, feature-dev, code-simplifier,
-  commit-commands, claude-md-management, hookify, supabase, playwright, semgrep. Глобально: context7 (актуальные доки библиотек), frontend-design, vercel.
+- **Плагины** (project scope, включены): pyright-lsp, code-review, security-guidance, commit-commands, supabase, playwright.
+  Глобально: context7 (актуальные доки библиотек), frontend-design. Отключены в `.claude/settings.json` ради токенов (вернуть `true` по необходимости):
+  vercel, pr-review-toolkit, feature-dev, code-simplifier, hookify, claude-md-management, semgrep.
 - **MCP** (`.mcp.json`): `sqlite` (dev-БД), `fetch` (доки Telegram Bot API), `git`; из плагинов — `supabase` (HTTP, нужна OAuth-авторизация), `playwright` (E2E кабинета).
