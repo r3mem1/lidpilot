@@ -5,7 +5,7 @@
     "security-guidance@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
     "supabase@claude-plugins-official": true,
-    "playwright@claude-plugins-official": true,
+    "playwright@claude-plugins-official": false,
     "vercel@claude-plugins-official": false,
     "pr-review-toolkit@claude-plugins-official": false,
     "feature-dev@claude-plugins-official": false,
@@ -17,6 +17,19 @@
   "env": {
     "PYTHONUTF8": "1",
     "BASH_MAX_OUTPUT_LENGTH": "20000"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/hooks/ruff_after_edit.py\""
+          }
+        ]
+      }
+    ]
   },
   "permissions": {
     "allow": [

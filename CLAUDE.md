@@ -89,7 +89,7 @@ Hook `scripts/hooks/ruff_after_edit.py` (PostToolUse) после правки `.
 - **Агенты** (`.claude/agents/`): `leadpilot-architect`, `backend-developer`, `ai-pipeline-engineer`, `telegram-integration-engineer`,
   `cabinet-frontend-developer`, `security-reviewer`, `qa-tester`, `spec-reviewer`.
 - **Скиллы** (`.claude/skills/`): `tenant-isolation-check`, `ai-guardrails-check`, `telegram-webhook`, `add-endpoint`, `acceptance-check`, `stage-runbook`.
-- **Плагины** (project scope, включены): pyright-lsp, code-review, security-guidance, commit-commands, supabase, playwright.
+- **Плагины** (project scope, включены): pyright-lsp, code-review, security-guidance, commit-commands, supabase (плагин playwright отключён — вместо него MCP `playwright` из `.mcp.json`).
   Глобально: context7 (актуальные доки библиотек), frontend-design. Отключены в `.claude/settings.json` ради токенов (вернуть `true` по необходимости):
   vercel, pr-review-toolkit, feature-dev, code-simplifier, hookify, claude-md-management, semgrep.
-- **MCP** (`.mcp.json`): `sqlite` (dev-БД), `fetch` (доки Telegram Bot API), `git`; из плагинов — `supabase` (HTTP, нужна OAuth-авторизация), `playwright` (E2E кабинета).
+- **MCP** (`.mcp.json`): `sqlite` (dev-БД), `fetch` (доки Telegram Bot API), `git`, `playwright` (E2E кабинета, через Яндекс.Браузер — Chrome не установлен); из плагинов — `supabase` (HTTP, нужна OAuth-авторизация).

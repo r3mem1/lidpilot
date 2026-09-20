@@ -8,6 +8,17 @@
       "command": "uvx",
       "args": ["mcp-server-fetch"]
     },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--browser",
+        "chromium",
+        "--executable-path",
+        "C:\\Program Files\\Yandex\\YandexBrowser\\Application\\browser.exe"
+      ]
+    },
     "git": {
       "command": "uvx",
       "args": ["mcp-server-git", "--repository", "."]
