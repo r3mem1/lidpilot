@@ -67,6 +67,10 @@ pip-audit -r requirements.txt          # уязвимости зависимос
 Тесты — самодостаточные скрипты `smoke_test*.py` (httpx + временная SQLite). Новый этап = новый `smoke_test_stageN.py` в том же стиле.
 **Запускать тесты через `python scripts/run_checks.py [stage4 …]`** — выводит только «ИТОГО» и упавшие проверки; полный вывод в `.test_logs/*.log`
 (открывать лог только при падении и нужен контекст). Голые `python smoke_test*.py` — только если нужен полный вывод.
+**Линтеры одной командой: `python scripts/run_checks.py lint [ruff|pyright|bandit|pip-audit]`** — те же ruff/format/pyright/bandit/pip-audit,
+но bandit выводится строкой на находку (не 250 строк), остальные — итоговой строкой. Находки не фильтруются; полные логи в `.test_logs/lint_*.log`.
+Известный шум: bandit даёт 19 LOW только в `smoke_test_stage3-5.py` и `scripts/` (тестовые пароли, assert) — в коде приложения замечаний нет.
+Hook `scripts/hooks/ruff_after_edit.py` (PostToolUse) после правки `.py` молча проверяет файл ruff'ом и при замечаниях возвращает их сразу.
 
 ## Экономия токенов (без потери качества проверок)
 - Не читать целиком `README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`, `services/message_service.py`: сначала Grep, затем Read с `offset/limit`.
