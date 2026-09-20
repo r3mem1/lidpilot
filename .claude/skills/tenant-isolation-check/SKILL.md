@@ -33,7 +33,7 @@ grep -rn "business_id" routes/ | grep -v "BusinessContext"            # business
 4. Без токена: 401.
 5. Не-ADMIN → `/admin/*`: отказ.
 ```bash
-python smoke_test.py
+python scripts/run_checks.py
 ```
 
 ## 4. Отчёт

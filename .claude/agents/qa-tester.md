@@ -22,9 +22,9 @@ model: sonnet
 
 ## Запуск
 ```bash
-python smoke_test.py && python smoke_test_ai.py
+python scripts/run_checks.py            # все smoke-тесты (или stage4 …): итог + упавшие; полный вывод в .test_logs/
 pytest -q                     # если добавлены test_*.py
-ruff check . && pyright
+python scripts/run_checks.py lint ruff pyright
 ```
 Для UI — Playwright MCP: открыть `uvicorn main:app`, пройти сценарии кабинета, снять скриншоты, прочитать консоль браузера.
 

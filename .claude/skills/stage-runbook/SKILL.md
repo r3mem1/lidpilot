@@ -20,10 +20,15 @@ description: Оркестрация разработки этапов 3–9 Lead
 | **3 Telegram** | `telegram-integration-engineer` (+ `backend-developer` для таблиц integrations/messages) | `telegram-webhook`, MCP fetch (Bot API) | webhook принимает, отвечает, дубли безопасны, секреты скрыты; §21 п.2,3,4,8,15 |
 | **4 CRM-ядро** | `backend-developer`, `ai-pipeline-engineer` (подключение pipeline к messages/ai_responses/leads) | `add-endpoint`, `tenant-isolation-check`, `ai-guardrails-check`, MCP sqlite | customers/conversations/messages/ai_responses/leads, фильтры по статусу/приоритету/периоду, ручной ответ; §21 п.5,6,10,11 |
 | **5 Кабинет** | `cabinet-frontend-developer` (+ `backend-developer` для данных дашборда/аналитики) | `frontend-design`, Playwright MCP | страницы §13–14 работают, роли соблюдаются, XSS/CSRF закрыты; §21 п.9,11 |
-| **6 Admin** | `backend-developer`, `cabinet-frontend-developer` | `tenant-isolation-check` (ADMIN-only), `add-endpoint` | §15: компании, статусы, тарифы, логи, метрики; §21 п.12,13 |
-| **7 Пилот** | `security-reviewer`, `qa-tester` | `acceptance-check`, semgrep, bandit, pip-audit, supabase MCP (prod-БД), плагин vercel/render для деплоя | 1–3 реальные компании; HTTPS, prod-конфиг, бэкапы, мониторинг ошибок |
-| **8 SaaS-автоматизация** | `leadpilot-architect` → `backend-developer` | context7 (SDK платёжного провайдера) | самостоятельная регистрация, trial, платежи, onboarding (§19: сложный биллинг вне MVP) |
-| **9 Масштабирование** | `leadpilot-architect` | — | новый канал через `ChannelClient` без правок ядра, очереди, кэш, мониторинг |
+| **6 Admin** | `backend-developer`, `cabinet-frontend-developer` | `admin-panel`, `tenant-isolation-check` (ADMIN-only), `add-endpoint`, Playwright MCP | §15: компании, статусы, тарифы, логи, метрики; §21 п.12,13 |
+| **7 Пилот** | `devops-engineer`, `security-reviewer`, `qa-tester` | `prod-readiness`, `acceptance-check`, bandit, pip-audit, supabase (см. ниже), хостинг по выбору пользователя | 1–3 реальные компании; HTTPS, prod-конфиг, бэкапы, мониторинг ошибок |
+| **8 SaaS-автоматизация** | `leadpilot-architect` → `backend-developer` (+ `cabinet-frontend-developer` для onboarding) | `add-endpoint`, context7 (SDK платёжного провайдера — выбирает пользователь) | самостоятельная регистрация, trial, платежи, onboarding (§19: сложный биллинг вне MVP) |
+| **9 Масштабирование** | `leadpilot-architect` → `telegram-integration-engineer`, `devops-engineer` | `add-channel`, Redis для rate limit/кэша, мониторинг | новый канал через `ChannelClient` без правок ядра, очереди, кэш, мониторинг |
+
+## Инструменты «включать по этапу» (экономия токенов: каждый включённый плагин/MCP добавляет описания в каждый ход)
+- **К этапу 7:** в `.claude/settings.json` вернуть `"supabase@claude-plugins-official": true` (prod-БД, advisors, OAuth). Хостинг и мониторинг — после выбора пользователя: `claude plugin install render@claude-plugins-official` (или `railway`), `sentry@claude-plugins-official`, `semgrep@claude-plugins-official` (SAST в реальном времени; включить `true`).
+- **К этапу 8:** плагин платёжного провайдера — по выбору пользователя (Stripe/ЮKassa и др.; ТЗ провайдера не задаёт).
+- После этапа выключать то, что больше не нужно.
 
 ## Правила
 - Не начинать этап N+1, пока этап N не прошёл `acceptance-check` для своих пунктов.

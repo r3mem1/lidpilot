@@ -22,8 +22,8 @@ description: Пошаговый рецепт добавления нового e
 8. **Тесты:** в `smoke_test*.py` — успех, чужая компания (404), недостаточная роль, без токена (401), невалидный ввод (422), запись в аудит.
 9. **Проверка:**
    ```bash
-   ruff check . && ruff format --check . && pyright
-   python smoke_test.py && python smoke_test_ai.py
+   python scripts/run_checks.py lint ruff pyright
+   python scripts/run_checks.py
    ```
    Затем скилл `tenant-isolation-check`.
 10. **Документация:** обнови статус этапа в `CLAUDE.md` и README, если этап закрыт.

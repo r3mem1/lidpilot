@@ -21,9 +21,8 @@ model: sonnet
 
 ## Проверка перед сдачей
 ```bash
-ruff check . && ruff format --check .
-pyright
-python smoke_test.py && python smoke_test_ai.py    # существующие тесты не должны сломаться
+python scripts/run_checks.py lint ruff pyright   # ruff + format + pyright: итог и находки, лог в .test_logs/
+python scripts/run_checks.py                     # все smoke-тесты: только «ИТОГО» и упавшие проверки; прошлые этапы не должны сломаться
 ```
 Для новой функциональности допиши проверки в стиле `smoke_test.py` (или создай `smoke_test_stageN.py`), включая негативные сценарии: чужая компания, MANAGER без прав, неавторизованный запрос.
 В отчёте: что сделано, какие файлы затронуты, какие проверки запущены и их результат (честно, включая падения).
