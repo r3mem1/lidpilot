@@ -1,0 +1,72 @@
+{% extends "admin_base.html" %}
+{% import "_admin_macros.html" as a %}
+{% block content %}
+{% set qs %}&amp;q={{ filters.q|urlencode }}&amp;status={{ filters.status|urlencode }}&amp;plan={{ filters.plan|urlencode }}{% endset %}
+<header class="page-head">
+  <div>
+    <h1>Компании</h1>
+    <p>Все компании платформы: статус, тариф, активность и подключённые каналы. Найдено: {{ page.total }}.</p>
+  </div>
+</header>
+
+<section class="sheet">
+  <form class="sheet-body" method="get" action="/admin/companies" role="search">
+    <div class="period">
+      <div class="field">
+        <label for="f-q">Название</label>
+        <input class="input input--small" id="f-q" name="q" type="search" value="{{ filters.q }}" maxlength="100" placeholder="Часть названия">
+      </div>
+      <div class="field">
+        <label for="f-status">Статус</label>
+        <select class="select select--small" id="f-status" name="status">
+          <option value="">Любой</option>
+          {% for s in statuses %}<option value="{{ s }}"{% if filters.status == s %} selected{% endif %}>{{ label('business_status', s) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-plan">Тариф</label>
+        <select class="select select--small" id="f-plan" name="plan">
+          <option value="">Любой</option>
+          {% for p in plans %}<option value="{{ p }}"{% if filters.plan == p %} selected{% endif %}>{{ label('plan', p) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="actions">
+        <button class="btn btn--small btn--primary" type="submit">Показать</button>
+        <a class="btn btn--small" href="/admin/companies">Сбросить</a>
+      </div>
+    </div>
+  </form>
+</section>
+
+<section class="sheet">
+  {% if page.items %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th class="grow">Компания</th><th>Статус</th><th>Тариф</th><th class="num">Польз.</th><th class="num">Сообщений</th><th>Активность</th><th>Каналы</th><th>Регистрация</th></tr></thead>
+        <tbody>
+          {% for item in page.items %}
+            <tr>
+              <td><a class="cell-title" href="/admin/companies/{{ item.id }}">{{ item.name }}</a>{% if item.category %}<div class="cell-sub">{{ item.category }}</div>{% endif %}</td>
+              <td>{{ a.status_tag(item.status) }}</td>
+              <td>{{ a.plan_cell(item) }}</td>
+              <td class="num">{{ item.users_count }}</td>
+              <td class="num">{{ item.messages_count }}</td>
+              <td class="muted">{% if item.last_activity_at %}<time datetime="{{ item.last_activity_at|iso }}" data-local>{{ item.last_activity_at|dt }}</time>{% else %}—{% endif %}</td>
+              <td>{{ a.integration_tags(item.integrations) }}</td>
+              <td class="muted"><time datetime="{{ item.created_at|iso }}" data-local>{{ item.created_at|dt }}</time></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if prev_offset is not none or next_offset is not none %}
+      <div class="sheet-body pager">
+        {% if prev_offset is not none %}<a class="btn btn--small" href="?offset={{ prev_offset }}{{ qs }}">← Назад</a>{% endif %}
+        {% if next_offset is not none %}<a class="btn btn--small" href="?offset={{ next_offset }}{{ qs }}">Дальше →</a>{% endif %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="sheet-body"><p class="muted">По этим условиям компаний нет.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

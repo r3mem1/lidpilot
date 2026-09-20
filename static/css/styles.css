@@ -473,3 +473,14 @@ td.pole-cell .pole { min-height: 34px; height: 100%; }
   .thread-head, .reply { padding-left: 12px; padding-right: 12px; }
   .log { padding: 12px; }
 }
+
+/* Панель администратора (этап 6) */
+.board-value--text { font-size: 17px; line-height: 1.5; padding-top: 6px; }
+.pager { display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--line-2); }
+.nowrap { white-space: nowrap; }
+.payload { margin-top: 6px; }
+.payload summary { cursor: pointer; color: var(--ink-3); font-size: 13px; }
+.payload pre { margin: 6px 0 0; padding: 8px 10px; max-width: 70ch; overflow: auto; background: var(--sheet-2); border-radius: 6px; font: 500 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; font-weight: 400; }
+fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }

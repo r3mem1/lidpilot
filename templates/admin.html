@@ -1,1 +1,103 @@
-<!-- Этап 5 (раздел 13 ТЗ): страница «admin» кабинета на Jinja2. Заполняется на этапе 5. -->
+{% extends "admin_base.html" %}
+{% import "_admin_macros.html" as a %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Обзор платформы</h1>
+    <p>Компании, подписки и техническое состояние LeadPilot.</p>
+  </div>
+  <div class="actions"><a class="btn" href="/admin/companies">Все компании</a></div>
+</header>
+
+<section class="board" aria-label="Компании">
+  <div class="board-item">
+    <div class="board-value">{{ metrics.companies_total }}</div>
+    <div class="board-label">Компаний</div>
+    <div class="board-note"><a href="/admin/companies">Открыть список</a></div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ metrics.companies_active }}</div>
+    <div class="board-label">Активных</div>
+    <div class="board-note"><a href="/admin/companies?status=ACTIVE">Показать</a></div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ metrics.companies_trial }}</div>
+    <div class="board-label">На пробном периоде</div>
+    <div class="board-note">Истёк срок: {{ metrics.trials_expired }}</div>
+  </div>
+  <div class="board-item{% if metrics.companies_suspended %} board-item--alert{% endif %}">
+    <div class="board-value">{{ metrics.companies_suspended }}</div>
+    <div class="board-label">Приостановлено</div>
+    <div class="board-note"><a href="/admin/companies?status=SUSPENDED">Показать</a></div>
+  </div>
+</section>
+
+<section class="board" aria-label="Деньги и нагрузка">
+  <div class="board-item">
+    <div class="board-value">{{ metrics.paid_subscriptions }}</div>
+    <div class="board-label">Платных подписок</div>
+    <div class="board-note">Активные компании на тарифах «Старт» и «Про»</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ metrics.mrr_rub|money }}</div>
+    <div class="board-label">MRR</div>
+    <div class="board-note">Месячная выручка по тарифам</div>
+  </div>
+  <div class="board-item{% if metrics.errors_24h %} board-item--alert{% endif %}">
+    <div class="board-value">{{ metrics.errors_24h }}</div>
+    <div class="board-label">Ошибок за сутки</div>
+    <div class="board-note"><a href="/admin/events?level=ERROR&amp;level=CRITICAL">Открыть события</a></div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ metrics.messages_24h }}</div>
+    <div class="board-label">Сообщений за сутки</div>
+    <div class="board-note">Сбоев интеграций: {{ metrics.integrations_with_errors }}</div>
+  </div>
+</section>
+
+<div class="grid grid--2">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Свежие ошибки</h2></div>
+    {% if errors %}
+      <div class="table-wrap"><table class="table"><tbody>
+        {% for entry in errors %}{{ a.log_row(entry) }}{% endfor %}
+      </tbody></table></div>
+    {% else %}
+      <div class="sheet-body"><p class="muted">Ошибок нет.</p></div>
+    {% endif %}
+  </section>
+
+  <div>
+    <section class="sheet">
+      <div class="sheet-head"><h2>Интеграции со сбоем</h2></div>
+      {% if integration_errors %}
+        <div class="table-wrap"><table class="table"><tbody>
+          {% for name, business_id, integration in integration_errors %}
+            <tr>
+              <td><a class="cell-title" href="/admin/companies/{{ business_id }}">{{ name }}</a><div class="cell-sub">{{ integration.last_error or 'Причина не указана' }}</div></td>
+              <td>{{ a.integration_tags([integration]) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody></table></div>
+      {% else %}
+        <div class="sheet-body"><p class="muted">Все интеграции работают.</p></div>
+      {% endif %}
+    </section>
+    <section class="sheet">
+      <div class="sheet-head"><h2>Пробный период истёк</h2></div>
+      {% if expired_trials %}
+        <div class="table-wrap"><table class="table"><tbody>
+          {% for item in expired_trials %}
+            <tr>
+              <td><a class="cell-title" href="/admin/companies/{{ item.id }}">{{ item.name }}</a></td>
+              <td class="muted">{{ a.plan_cell(item) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody></table></div>
+      {% else %}
+        <div class="sheet-body"><p class="muted">Нет компаний с истёкшим пробным периодом.</p></div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

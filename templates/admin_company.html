@@ -1,0 +1,131 @@
+{% extends "admin_base.html" %}
+{% import "_admin_macros.html" as a %}
+{% block content %}
+{% set item = detail.item %}
+<header class="page-head">
+  <div>
+    <h1>{{ item.name }}</h1>
+    <p>{% if item.category %}{{ item.category }} · {% endif %}владелец {{ detail.owner_email or '—' }} · компания №{{ item.id }}</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/admin/companies">← Все компании</a>
+    <a class="btn" href="/cabinet/{{ item.id }}">Открыть кабинет компании</a>
+  </div>
+</header>
+
+{% if item.status.value == 'SUSPENDED' %}
+  <div class="notice notice--error" role="alert">Компания приостановлена: сообщения клиентов сохраняются, но AI не отвечает и менеджеры не могут отправлять ответы.</div>
+{% elif item.trial_expired %}
+  <div class="notice notice--warn" role="status">Пробный период истёк. Продлите его или переведите компанию на платный тариф.</div>
+{% endif %}
+
+<section class="board" aria-label="Показатели компании">
+  <div class="board-item">
+    <div class="board-value">{{ item.users_count }}</div>
+    <div class="board-label">Пользователей</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ item.messages_count }}</div>
+    <div class="board-label">Сообщений всего</div>
+    <div class="board-note">За сутки: {{ detail.messages_24h }}</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value board-value--text">{% if item.last_activity_at %}<time datetime="{{ item.last_activity_at|iso }}" data-local>{{ item.last_activity_at|dt }}</time>{% else %}—{% endif %}</div>
+    <div class="board-label">Последняя активность</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value board-value--text"><time datetime="{{ item.created_at|iso }}" data-local>{{ item.created_at|dt }}</time></div>
+    <div class="board-label">Дата регистрации</div>
+  </div>
+</section>
+
+<div class="grid grid--2">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Статус компании</h2></div>
+    <div class="sheet-body">
+      <div class="field">
+        <label for="business-status">Статус</label>
+        <select class="select" id="business-status" data-api-change data-success="reload" data-method="PUT" data-url="/admin/businesses/{{ item.id }}/status" data-field="status">
+          {% for s in statuses %}<option value="{{ s }}"{% if item.status.value == s %} selected{% endif %}>{{ label('business_status', s) }}</option>{% endfor %}
+        </select>
+        <span class="hint">«Приостановлена» останавливает AI и ответы менеджеров; входящие сообщения продолжают сохраняться.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head"><h2>Тариф и пробный период</h2></div>
+    <div class="sheet-body">
+      <p>Сейчас: <strong>{{ label('plan', item.plan) }}</strong>, {% if item.expires_at %}действует до <time datetime="{{ item.expires_at|iso }}" data-local>{{ item.expires_at|dt }}</time>{% else %}без срока{% endif %}.</p>
+      <form data-api-form data-method="PUT" data-url="/admin/businesses/{{ item.id }}/plan" data-success="reload" novalidate>
+        <div class="form-row">
+          <div class="field">
+            <label for="plan">Тариф</label>
+            <select class="select" id="plan" name="plan">
+              {% for p in plans %}<option value="{{ p }}"{% if item.plan.value == p %} selected{% endif %}>{{ label('plan', p) }} — {{ prices[p]|money }}/мес</option>{% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="expires-on">Действует до</label>
+            <input class="input" id="expires-on" name="expires_on" type="date" data-empty="omit">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Сохранить тариф</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      </form>
+      <div class="actions">
+        {% for days in (7, 14, 30) %}
+          <button class="btn btn--small" type="button" data-api-click data-method="PUT" data-url="/admin/businesses/{{ item.id }}/plan" data-body='{"extend_days": {{ days }}}' data-success="reload">Продлить на {{ days }} дн.</button>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="grid grid--2">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Сотрудники</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="grow">Email</th><th>Роль</th><th>Учётная запись</th></tr></thead>
+      <tbody>
+        {% for email, role, user_status in detail.members %}
+          <tr><td>{{ email }}</td><td>{{ label('role', role) }}</td><td>{% if user_status.value == 'ACTIVE' %}Активна{% else %}<span class="tag tag--attention">Заблокирована</span>{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head"><h2>Интеграции</h2></div>
+    {% if item.integrations %}
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th class="grow">Канал</th><th>Состояние</th></tr></thead>
+        <tbody>
+          {% for i in item.integrations %}
+            <tr>
+              <td><span class="cell-title">{{ i.channel.value|title }}{% if i.external_account_name %} · {{ i.external_account_name }}{% endif %}</span>
+                {% if i.last_error %}<div class="cell-sub">{{ i.last_error }}</div>{% endif %}</td>
+              <td>{{ a.integration_tags([i]) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    {% else %}
+      <div class="sheet-body"><p class="muted">Канал не подключён.</p></div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="sheet">
+  <div class="sheet-head"><h2>Последние ошибки</h2><a class="btn btn--small" href="/admin/events?business_id={{ item.id }}">Все события компании</a></div>
+  {% if detail.errors %}
+    <div class="table-wrap"><table class="table"><tbody>
+      {% for entry in detail.errors %}{{ a.log_row(entry, false) }}{% endfor %}
+    </tbody></table></div>
+  {% else %}
+    <div class="sheet-body"><p class="muted">Ошибок нет.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

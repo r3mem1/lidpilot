@@ -85,7 +85,11 @@ class LoginRequired(Exception):
 def safe_next(value: str | None) -> str:
     """Куда вернуть пользователя после входа. Только внутренние адреса кабинета:
     иначе форма входа стала бы открытым перенаправлением на чужой сайт."""
-    if value and value.startswith(("/cabinet", "/invite/")) and not value.startswith("//"):
+    if (
+        value
+        and (value.startswith(("/cabinet", "/invite/", "/admin/")) or value == "/admin")
+        and not value.startswith("//")
+    ):
         return value if "\\" not in value else "/cabinet"
     return "/cabinet"
 
@@ -267,6 +271,8 @@ def invite_page(
 @router.get("/cabinet")
 def cabinet_home(request: Request, user: User = Depends(page_user), db: Session = Depends(get_db)):
     memberships = _memberships(db, user)
+    if user.is_platform_admin and not memberships:
+        return RedirectResponse("/admin", status_code=303)  # у ADMIN своей компании нет
     if len(memberships) == 1:
         return RedirectResponse(f"/cabinet/{memberships[0]['id']}", status_code=303)
     return templates.TemplateResponse(

@@ -138,9 +138,24 @@ def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -
         return None
 
 
-def require_platform_admin(user: User = Depends(get_current_user)) -> User:
-    """Доступ только для владельца LeadPilot (раздел 15: панель /admin)."""
+def require_platform_admin(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Доступ только для владельца LeadPilot (раздел 15: панель /admin).
+
+    Попытка не-ADMIN попасть в панель — событие безопасности (раздел 17)."""
     if not user.is_platform_admin:
+        audit_service.log_event(
+            db,
+            event_type=audit_service.EventType.ACCESS_DENIED,
+            message="Попытка доступа к панели администратора",
+            level=LogLevel.WARNING,
+            actor_user_id=user.id,
+            payload={"path": request.url.path, "method": request.method},
+            commit=True,
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав")
     return user
 

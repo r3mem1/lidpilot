@@ -1,0 +1,70 @@
+{% extends "admin_base.html" %}
+{% import "_admin_macros.html" as a %}
+{% block content %}
+{% set qs %}{% for l in filters.levels %}&amp;level={{ l|urlencode }}{% endfor %}&amp;q={{ filters.q|urlencode }}&amp;event_type={{ filters.event_type|urlencode }}&amp;business_id={{ filters.business_id|urlencode }}&amp;date_from={{ filters.date_from|urlencode }}&amp;date_to={{ filters.date_to|urlencode }}{% endset %}
+<header class="page-head">
+  <div>
+    <h1>События и ошибки</h1>
+    <p>Журнал платформы: что произошло с сообщениями, каналами и настройками. Найдено: {{ page.total }}.</p>
+  </div>
+</header>
+
+<section class="sheet">
+  <form class="sheet-body" method="get" action="/admin/events" role="search">
+    <div class="period">
+      <fieldset class="field">
+        <legend class="label">Уровень</legend>
+        <div class="checks">
+          {% for l in levels %}<label class="check"><input type="checkbox" name="level" value="{{ l }}"{% if l in filters.levels %} checked{% endif %}> {{ label('log_level', l) }}</label>{% endfor %}
+        </div>
+      </fieldset>
+      <div class="field">
+        <label for="f-type">Тип события</label>
+        <select class="select select--small" id="f-type" name="event_type">
+          <option value="">Любой</option>
+          {% for t in event_types %}<option value="{{ t }}"{% if filters.event_type == t %} selected{% endif %}>{{ t }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-business">Компания №</label>
+        <input class="input input--small" id="f-business" name="business_id" inputmode="numeric" maxlength="12" value="{{ filters.business_id }}">
+      </div>
+      <div class="field">
+        <label for="f-q">Текст</label>
+        <input class="input input--small" id="f-q" name="q" type="search" maxlength="100" value="{{ filters.q }}">
+      </div>
+      <div class="field">
+        <label for="f-from">С</label>
+        <input class="input input--small" id="f-from" name="date_from" type="date" value="{{ filters.date_from }}">
+      </div>
+      <div class="field">
+        <label for="f-to">По</label>
+        <input class="input input--small" id="f-to" name="date_to" type="date" value="{{ filters.date_to }}">
+      </div>
+      <div class="actions">
+        <button class="btn btn--small btn--primary" type="submit">Показать</button>
+        <a class="btn btn--small" href="/admin/events">Сбросить</a>
+      </div>
+    </div>
+  </form>
+</section>
+
+<section class="sheet">
+  {% if page.items %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Время</th><th>Уровень</th><th>Событие</th><th>Компания</th><th class="grow">Описание</th></tr></thead>
+        <tbody>{% for entry in page.items %}{{ a.log_row(entry) }}{% endfor %}</tbody>
+      </table>
+    </div>
+    {% if prev_offset is not none or next_offset is not none %}
+      <div class="sheet-body pager">
+        {% if prev_offset is not none %}<a class="btn btn--small" href="?offset={{ prev_offset }}{{ qs }}">← Новее</a>{% endif %}
+        {% if next_offset is not none %}<a class="btn btn--small" href="?offset={{ next_offset }}{{ qs }}">Старее →</a>{% endif %}
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="sheet-body"><p class="muted">Событий по этим условиям нет.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

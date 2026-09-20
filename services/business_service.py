@@ -33,7 +33,7 @@ from schemas import (
     ServiceCreate,
     ServiceUpdate,
 )
-from services import audit_service
+from services import admin_service, audit_service
 from services.access_service import BusinessContext
 from services.auth_service import get_user_by_email
 
@@ -53,6 +53,8 @@ def create_business(db: Session, user: User, payload: BusinessCreate) -> Busines
     db.flush()
 
     db.add(BusinessMember(business_id=business.id, user_id=user.id, role=MemberRole.OWNER))
+    # Пробный период (раздел 15): срок и тариф дальше меняет ADMIN.
+    db.add(admin_service.new_trial_subscription(business.id))
 
     audit_service.log_event(
         db,

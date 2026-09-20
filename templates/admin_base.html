@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block body %}
+<a class="skip-link" href="#main">К содержимому</a>
+<div class="topbar">
+  <a class="brand" href="/admin"><span class="brand-pole" aria-hidden="true"></span>LeadPilot</a>
+  <button class="btn btn--small" type="button" data-nav-toggle aria-controls="rail" aria-expanded="false">Меню</button>
+</div>
+<div class="app">
+  <aside class="rail" id="rail" aria-label="Разделы панели администратора">
+    <a class="brand" href="/admin"><span class="brand-pole" aria-hidden="true"></span>LeadPilot</a>
+    <div class="switcher"><span class="cell-title">Панель администратора</span><span class="cell-sub">Все компании платформы</span></div>
+    <nav class="nav" aria-label="Основное меню">
+      <div class="nav-group">
+        {% for item in nav %}
+          <a class="nav-link" href="{{ item.path }}"{% if item.key == active %} aria-current="page"{% endif %}><span>{{ item.label }}</span></a>
+        {% endfor %}
+      </div>
+    </nav>
+    <div class="rail-foot">
+      <span class="who">{{ user.email }}</span>
+      <span>{{ label('role', user.role) }}</span>
+      <button class="btn btn--small" type="button" data-logout>Выйти</button>
+    </div>
+  </aside>
+  <main class="main" id="main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

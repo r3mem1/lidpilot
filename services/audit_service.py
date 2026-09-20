@@ -77,6 +77,10 @@ class EventType:
     # Безопасность
     ACCESS_DENIED: Final = "ACCESS_DENIED"
 
+    # Административная панель (этап 6, раздел 15): критические действия ADMIN (§16–17)
+    ADMIN_BUSINESS_STATUS_CHANGED: Final = "ADMIN_BUSINESS_STATUS_CHANGED"
+    ADMIN_SUBSCRIPTION_CHANGED: Final = "ADMIN_SUBSCRIPTION_CHANGED"
+
     # Платформа
     ADMIN_BOOTSTRAPPED: Final = "ADMIN_BOOTSTRAPPED"
     UNHANDLED_ERROR: Final = "UNHANDLED_ERROR"

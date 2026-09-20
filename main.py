@@ -35,6 +35,7 @@ from config import settings
 from database import Base, SessionLocal, engine
 from models import LogLevel, User, UserRole, UserStatus
 from routes import admin as admin_routes
+from routes import admin_pages as admin_pages_routes
 from routes import auth as auth_routes
 from routes import businesses as businesses_routes
 from routes import cabinet as cabinet_routes
@@ -196,7 +197,8 @@ app.include_router(team_routes.router)
 app.include_router(messages_routes.router)  # webhook и диалоги (ручной ответ — этап 4)
 # --- Зарегистрированы заранее, наполняются на своих этапах ---
 app.include_router(leads_routes.router)  # этап 4
-app.include_router(admin_routes.router)  # этап 6
+app.include_router(admin_routes.router)  # этап 6: JSON API (раздел 11)
+app.include_router(admin_pages_routes.router)  # этап 6: страницы панели (раздел 15)
 # --- Этап 5: кабинет бизнеса (страницы) ---
 app.include_router(cabinet_routes.router)
 
@@ -204,6 +206,19 @@ app.include_router(cabinet_routes.router)
 # Страницы кабинета (этап 5): им задаётся строгая политика содержимого. Swagger (/docs)
 # использует внешние скрипты и сюда не входит — в production он закрыт.
 _CABINET_PREFIXES = ("/cabinet", "/login", "/register", "/invite")
+# Панель администратора (этап 6): страницы /admin[/companies|/events], а /admin/businesses,
+# /admin/logs, /admin/metrics — JSON API, ошибки которых остаются JSON.
+_ADMIN_PAGE_PREFIXES = ("/admin/companies", "/admin/events")
+
+
+def _is_html_page(path: str) -> bool:
+    return (
+        path.startswith(_CABINET_PREFIXES)
+        or path == "/admin"
+        or path.startswith(_ADMIN_PAGE_PREFIXES)
+    )
+
+
 _CABINET_CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -221,9 +236,11 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "same-origin")
     if settings.force_https:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
-    if request.url.path.startswith(_CABINET_PREFIXES):
+    path = request.url.path
+    if _is_html_page(path):
         response.headers["Content-Security-Policy"] = _CABINET_CSP
-        response.headers["Cache-Control"] = "no-store"
+    if _is_html_page(path) or path.startswith("/admin"):
+        response.headers["Cache-Control"] = "no-store"  # данные всех компаний не кэшируются
     return response
 
 
@@ -235,7 +252,7 @@ async def login_required_handler(request: Request, exc: cabinet_routes.LoginRequ
 
 _ERROR_TEXT = {
     401: ("Нужно войти", "Войдите в кабинет, чтобы продолжить."),
-    403: ("Недостаточно прав", "Этот раздел доступен только владельцу компании."),
+    403: ("Недостаточно прав", "Этот раздел вам недоступен."),
     404: ("Страница не найдена", "Такой страницы нет, или у вас нет к ней доступа."),
 }
 
@@ -243,7 +260,7 @@ _ERROR_TEXT = {
 @app.exception_handler(StarletteHTTPException)
 async def http_error_handler(request: Request, exc: StarletteHTTPException):
     """Ошибки страниц кабинета показываются как HTML, ошибки API — как JSON."""
-    if request.url.path.startswith(_CABINET_PREFIXES):
+    if _is_html_page(request.url.path):
         title, text = _ERROR_TEXT.get(
             exc.status_code, ("Что-то пошло не так", "Попробуйте ещё раз чуть позже.")
         )

@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     bootstrap_admin_email: EmailStr | None = None
     bootstrap_admin_password: str | None = None
 
+    # --- Тарифы и пробный период (этап 6, раздел 15) ---
+    # ТЗ не задаёт тарифную сетку: значения — заглушки для расчёта MRR в панели ADMIN,
+    # меняются переменными окружения. Платежей и автоматических подписок в MVP нет (§19).
+    trial_days: int = Field(default=14, ge=1, le=365)
+    plan_price_start_rub: int = Field(default=1990, ge=0)
+    plan_price_pro_rub: int = Field(default=4990, ge=0)
+
     # --- Каналы и обработка сообщений (этап 3, разделы 11, 16, 18) ---
     # Публичный HTTPS-адрес приложения: по нему Telegram присылает webhook
     # (POST {PUBLIC_BASE_URL}/webhooks/telegram). Локально — cloudflared/ngrok.

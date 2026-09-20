@@ -8,6 +8,7 @@ Jinja2-шаблоны кабинета — раздел 9 ТЗ (HTML/CSS/JavaScr
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -64,6 +65,13 @@ def clean_reason(value: str | None) -> str:
     return text[:1].upper() + text[1:] if text else ""
 
 
+def pretty_json(value: object) -> str:
+    """Данные события для панели администратора: читаемый JSON (кириллица без \\u-кодов).
+    Возвращается обычной строкой — автоэкранирование Jinja остаётся включённым."""
+    return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+
+
+templates.env.filters["pretty_json"] = pretty_json
 templates.env.filters["reason"] = clean_reason
 templates.env.filters["dt"] = format_dt
 templates.env.filters["iso"] = iso_dt

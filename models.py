@@ -4,7 +4,7 @@
 Этап 1: users, businesses, business_members, services, system_logs.
 Этап 3: integrations, customers, conversations, messages, ai_responses —
 минимум, без которого нельзя сохранить входящее сообщение и ответ (раздел 18).
-Таблицы leads (этап 4) и subscriptions (этап 6) добавятся на своих этапах.
+Этап 4: leads. Этап 5: invitations. Этап 6: subscriptions (тариф и пробный период, раздел 15).
 
 Все ENUM объявлены как native_enum=False (VARCHAR + CHECK): одинаково работает
 в SQLite на разработке и в PostgreSQL в production, миграция значений не требует
@@ -97,6 +97,19 @@ class LogLevel(str, enum.Enum):
     CRITICAL = "CRITICAL"
 
 
+class SubscriptionPlan(str, enum.Enum):
+    """Тариф компании (раздел 15). Цены — в настройках (config.plan_price_*)."""
+
+    TRIAL = "TRIAL"
+    START = "START"
+    PRO = "PRO"
+
+
+class SubscriptionStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    CANCELED = "CANCELED"
+
+
 def enum_column(enum_cls: type[enum.Enum], **kwargs: Any):
     return mapped_column(
         SAEnum(enum_cls, native_enum=False, length=32, validate_strings=True),
@@ -181,6 +194,9 @@ class Business(Base):
     services: Mapped[list[Service]] = relationship(
         back_populates="business", cascade="all, delete-orphan"
     )
+    subscription: Mapped[Subscription | None] = relationship(
+        back_populates="business", cascade="all, delete-orphan", uselist=False
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Business id={self.id} name={self.name!r}>"
@@ -243,6 +259,37 @@ class Service(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Service id={self.id} business_id={self.business_id} name={self.name!r}>"
+
+
+# --------------------------------------------------------------------------- #
+# subscriptions — тариф и пробный период (разделы 10, 15). Этап 6
+# --------------------------------------------------------------------------- #
+class Subscription(Base):
+    """Текущая подписка компании: одна запись на компанию (UNIQUE business_id).
+
+    MVP без биллинга (раздел 19): тариф и срок меняет ADMIN вручную; история
+    изменений — события ADMIN_SUBSCRIPTION_CHANGED в system_logs. Для пробного
+    периода expires_at — конец trial.
+    """
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    plan: Mapped[SubscriptionPlan] = enum_column(
+        SubscriptionPlan, nullable=False, default=SubscriptionPlan.TRIAL
+    )
+    status: Mapped[SubscriptionStatus] = enum_column(
+        SubscriptionStatus, nullable=False, default=SubscriptionStatus.ACTIVE
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    business: Mapped[Business] = relationship(back_populates="subscription")
 
 
 # --------------------------------------------------------------------------- #

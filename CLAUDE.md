@@ -42,7 +42,7 @@ templates/ static/   кабинет (Jinja2)
 | 3 Telegram (webhook, отправка) | ✅ реализован, `smoke_test_stage3.py` |
 | 4 CRM-ядро (лиды, статусы, ручной ответ, фильтры) | ✅ реализован, `smoke_test_stage4.py` |
 | 5 Кабинет бизнеса (dashboard, сообщения, лиды, клиенты, услуги, AI, команда, настройки, аналитика) | ✅ реализован, `smoke_test_stage5.py`, `scripts/e2e_browser.py` |
-| 6 Admin-панель | ⏳ `routes/admin.py` пуст |
+| 6 Admin-панель (`/admin`: обзор, компании, статус/тариф/trial, события, метрики, MRR) | ✅ реализован, `smoke_test_stage6.py`, `scripts/e2e_admin.py` |
 | 7–9 Пилот, SaaS-автоматизация, масштабирование | — |
 
 Не выходить за границы текущего этапа: не добавлять функции из «Не входит в MVP» (§19) — календарь, биллинг, несколько каналов, мобильное приложение.
@@ -54,10 +54,11 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head                   # миграции; новая: alembic revision --autogenerate -m "..."
 uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
-python smoke_test_ai.py                # 141 проверка этапа 2
+python smoke_test_ai.py                # 142 проверки этапа 2
 python smoke_test_stage3.py            # 139 проверок этапа 3
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 181 проверка этапа 5
+python smoke_test_stage6.py            # 134 проверки этапа 6
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
@@ -65,19 +66,10 @@ bandit -r . -x ./migrations,./smoke_test.py,./smoke_test_ai.py   # SAST
 pip-audit -r requirements.txt          # уязвимости зависимостей
 ```
 Тесты — самодостаточные скрипты `smoke_test*.py` (httpx + временная SQLite). Новый этап = новый `smoke_test_stageN.py` в том же стиле.
-**Запускать тесты через `python scripts/run_checks.py [stage4 …]`** — выводит только «ИТОГО» и упавшие проверки; полный вывод в `.test_logs/*.log`
-(открывать лог только при падении и нужен контекст). Голые `python smoke_test*.py` — только если нужен полный вывод.
-**Линтеры одной командой: `python scripts/run_checks.py lint [ruff|pyright|bandit|pip-audit]`** — те же ruff/format/pyright/bandit/pip-audit,
-но bandit выводится строкой на находку (не 250 строк), остальные — итоговой строкой. Находки не фильтруются; полные логи в `.test_logs/lint_*.log`.
-Известный шум: bandit даёт 19 LOW только в `smoke_test_stage3-5.py` и `scripts/` (тестовые пароли, assert) — в коде приложения замечаний нет.
-Hook `scripts/hooks/ruff_after_edit.py` (PostToolUse) после правки `.py` молча проверяет файл ruff'ом и при замечаниях возвращает их сразу.
-
-## Экономия токенов (без потери качества проверок)
-- Не читать целиком `README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`, `services/message_service.py`: сначала Grep, затем Read с `offset/limit`.
-- Широкий поиск «где что реализовано» — субагенту `Explore`; в основной контекст возвращать выводы, а не дампы файлов.
-- Не перечитывать файл после Edit; независимые вызовы инструментов — параллельно, одним сообщением.
-- Не читать `.env`, `*.db`, `static/fonts/`, кэши (закрыто в `permissions.deny`); БД смотреть через MCP `sqlite` с точечным SELECT.
-- Проверки (ruff/pyright/bandit) запускать на изменённых файлах, полный прогон — перед коммитом и закрытием этапа.
+Токены: тесты и линтеры запускать через `python scripts/run_checks.py [stage4 …]` и `… lint [ruff|pyright|bandit|pip-audit]` —
+печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 25 LOW в `smoke_test_stage3-6.py`/`scripts/` — известный шум.
+Hook `scripts/hooks/ruff_after_edit.py` проверяет правленый `.py` ruff'ом. Большие файлы (`README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`,
+`services/message_service.py`) — Grep, затем Read с `offset/limit`; широкий поиск — субагенту `Explore`; БД — MCP `sqlite` точечным SELECT.
 
 ## Соглашения кода
 - Комментарии и docstring — на русском, с указанием раздела ТЗ; имена — английские; `from __future__ import annotations`.
@@ -86,10 +78,9 @@ Hook `scripts/hooks/ruff_after_edit.py` (PostToolUse) после правки `.
 - Не добавлять endpoint'ы вне §11 без явного пометки «вне ТЗ» (как `ai/preview`, выключен флагом).
 
 ## Инструменты, настроенные для проекта
-- **Агенты** (`.claude/agents/`): `leadpilot-architect`, `backend-developer`, `ai-pipeline-engineer`, `telegram-integration-engineer`,
-  `cabinet-frontend-developer`, `security-reviewer`, `qa-tester`, `spec-reviewer`.
-- **Скиллы** (`.claude/skills/`): `tenant-isolation-check`, `ai-guardrails-check`, `telegram-webhook`, `add-endpoint`, `acceptance-check`, `stage-runbook`.
-- **Плагины** (project scope, включены): pyright-lsp, code-review, security-guidance, commit-commands, supabase (плагин playwright отключён — вместо него MCP `playwright` из `.mcp.json`).
-  Глобально: context7 (актуальные доки библиотек), frontend-design. Отключены в `.claude/settings.json` ради токенов (вернуть `true` по необходимости):
-  vercel, pr-review-toolkit, feature-dev, code-simplifier, hookify, claude-md-management, semgrep.
-- **MCP** (`.mcp.json`): `sqlite` (dev-БД), `fetch` (доки Telegram Bot API), `git`, `playwright` (E2E кабинета, через Яндекс.Браузер — Chrome не установлен); из плагинов — `supabase` (HTTP, нужна OAuth-авторизация).
+- **Агенты** (`.claude/agents/`, 9) и **скиллы** (`.claude/skills/`, 9: `tenant-isolation-check`, `ai-guardrails-check`, `telegram-webhook`, `add-endpoint`, `acceptance-check`, `stage-runbook`,
+  `admin-panel` (этап 6), `prod-readiness` (этап 7), `add-channel` (этап 9)) — какие подключать на этапе, см. `stage-runbook`.
+- **Плагины** (project scope, включены): pyright-lsp, code-review, security-guidance, commit-commands. Глобально: context7 (актуальные доки), frontend-design.
+  Выключены в `.claude/settings.json` ради токенов (каждый включённый плагин/MCP добавляет описания в каждый ход; вернуть `true` к нужному этапу):
+  **supabase (включить к этапу 7)**, vercel, pr-review-toolkit, feature-dev, code-simplifier, hookify, claude-md-management, semgrep. Хостинг/мониторинг/платежи — по выбору пользователя (`stage-runbook`).
+- **MCP** (`.mcp.json`): `sqlite` (dev-БД), `fetch` (доки Bot API), `playwright` (E2E кабинета, через Яндекс.Браузер — Chrome не установлен). Git — через Bash (MCP `git` убран как дубль).

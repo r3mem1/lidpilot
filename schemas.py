@@ -11,7 +11,7 @@ Pydantic-схемы (контракты API) — раздел 11 ТЗ.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated
 
@@ -43,6 +43,8 @@ from models import (
     MemberRole,
     ProcessingStatus,
     SenderType,
+    SubscriptionPlan,
+    SubscriptionStatus,
     UserRole,
     UserStatus,
 )
@@ -222,7 +224,7 @@ class BusinessMemberOut(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Системные логи (разделы 16, 17) — чтение появится в панели ADMIN на этапе 6
+# Системные логи (разделы 16, 17) — читаются в панели ADMIN (этап 6, GET /admin/logs)
 # --------------------------------------------------------------------------- #
 class SystemLogOut(ORMModel):
     id: int
@@ -488,3 +490,94 @@ class AnalyticsOut(BaseModel):
     leads_by_status: dict[str, int]
     intents: dict[str, int]
     daily: list[DailyPoint]
+
+
+# --------------------------------------------------------------------------- #
+# Административная панель (этап 6, раздел 15). Секретов интеграций здесь нет:
+# только канал, статус и текст последней ошибки.
+# --------------------------------------------------------------------------- #
+class AdminIntegrationOut(BaseModel):
+    channel: Channel
+    status: IntegrationStatus
+    external_account_name: str | None
+    last_error: str | None
+    created_at: datetime
+
+
+class AdminBusinessItem(BaseModel):
+    id: int
+    name: str
+    category: str | None
+    status: BusinessStatus
+    plan: SubscriptionPlan
+    subscription_status: SubscriptionStatus
+    expires_at: datetime | None
+    trial_expired: bool
+    created_at: datetime
+    users_count: int
+    messages_count: int
+    last_activity_at: datetime | None
+    integrations: list[AdminIntegrationOut]
+
+
+class AdminBusinessPage(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[AdminBusinessItem]
+
+
+class AdminBusinessStatusUpdate(BaseModel):
+    status: BusinessStatus
+
+
+class AdminSubscriptionUpdate(BaseModel):
+    """Ручное изменение тарифа и пробного периода (раздел 15).
+
+    expires_on — последний день срока (trial или оплаченного периода);
+    extend_days — продлить от текущего срока (или от сегодня, если срок истёк).
+    """
+
+    plan: SubscriptionPlan | None = None
+    status: SubscriptionStatus | None = None
+    expires_on: date | None = None
+    extend_days: int | None = Field(default=None, ge=1, le=365)
+
+    @model_validator(mode="after")
+    def _validate(self) -> AdminSubscriptionUpdate:
+        if not self.model_fields_set:
+            raise ValueError("Нет полей для изменения")
+        if self.expires_on is not None and self.extend_days is not None:
+            raise ValueError("Укажите либо дату окончания, либо число дней продления")
+        return self
+
+
+class AdminMetrics(BaseModel):
+    companies_total: int
+    companies_active: int
+    companies_trial: int
+    companies_suspended: int
+    trials_expired: int
+    paid_subscriptions: int
+    mrr_rub: int
+    integrations_with_errors: int
+    errors_24h: int
+    messages_24h: int
+
+
+class AdminLogItem(BaseModel):
+    id: int
+    business_id: int | None
+    business_name: str | None
+    level: LogLevel
+    event_type: str
+    message: str
+    payload: dict | None
+    created_at: datetime
+
+
+class AdminLogPage(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[AdminLogItem]

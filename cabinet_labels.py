@@ -49,6 +49,14 @@ LABELS: dict[str, dict[str, str]] = {
         "ACTIVE": "Активна",
         "SUSPENDED": "Приостановлена",
     },
+    "plan": {"TRIAL": "Пробный", "START": "Старт", "PRO": "Про"},
+    "subscription_status": {"ACTIVE": "Действует", "CANCELED": "Отменена"},
+    "log_level": {
+        "INFO": "Информация",
+        "WARNING": "Предупреждение",
+        "ERROR": "Ошибка",
+        "CRITICAL": "Критично",
+    },
     "integration_status": {"ACTIVE": "Подключён", "DISABLED": "Отключён", "ERROR": "Ошибка"},
     "ai_status": {
         "PENDING": "Ожидает отправки",

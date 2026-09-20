@@ -1,4 +1,4 @@
-# LeadPilot — этапы 1–5
+# LeadPilot — этапы 1–6
 
 Реализовано строго по ТЗ v1.0, раздел 20.
 
@@ -27,8 +27,14 @@ Telegram, отметка «решено», клиенты и история их
 сообщения с ручным ответом, лиды, клиенты, услуги, настройки AI, сотрудники и приглашения,
 интеграции, аналитика.
 
-Панель ADMIN (этап 6) не реализована — в проекте присутствуют только файлы структуры Приложения A
-с объявленными контрактами.
+**Этап 6 «Admin»:** панель владельца SaaS `/admin` (только ADMIN) — обзор с метриками (компании,
+активные, trial, платные подписки, MRR), список компаний с поиском и фильтрами, карточка компании
+(сотрудники, интеграции, статус, тариф, продление пробного периода), журнал событий и ошибок с
+маскированием секретов. JSON API: `GET /admin/businesses`, `GET /admin/logs`,
+`PUT /admin/businesses/{id}/status` (§11) и вне §11: `PUT /admin/businesses/{id}/plan`,
+`GET /admin/metrics`. Приостановленная компания (`SUSPENDED`): сообщения сохраняются, AI и ответы
+менеджеров отключены. Цены тарифов для MRR — заглушки в `.env` (`PLAN_PRICE_START_RUB`,
+`PLAN_PRICE_PRO_RUB`, срок trial — `TRIAL_DAYS`): ТЗ тарифную сетку не задаёт.
 
 ## Запуск
 
@@ -55,10 +61,11 @@ uvicorn main:app --reload     # http://127.0.0.1:8000/docs
 ```bash
 pip install httpx
 python smoke_test.py       # 80 проверок этапа 1: роли, изоляция компаний, аудит, rate limit
-python smoke_test_ai.py    # 141 проверка этапа 2: классификация, валидатор, эскалации, логи
+python smoke_test_ai.py    # 142 проверки этапа 2: классификация, валидатор, эскалации, логи
 python smoke_test_stage3.py  # 139 проверок этапа 3: webhook, идемпотентность, сбои, изоляция
 python smoke_test_stage4.py  # 121 проверка этапа 4: лиды, ручной ответ, «решено», клиенты
 python smoke_test_stage5.py  # 181 проверка этапа 5: страницы и роли, XSS/CSRF/CSP, команда, аналитика
+python smoke_test_stage6.py  # 134 проверки этапа 6: доступ ADMIN, статусы, тарифы, MRR, журнал, XSS/CSRF
 ```
 
 Пошаговая инструкция ручной проверки (Swagger, OpenRouter, настоящий Telegram) —
@@ -230,4 +237,4 @@ python scripts/seed_demo.py     # владелец demo@example.com и мене�
 `routes/integrations.py`, `routes/cabinet.py`, `routes/team.py`, `services/lead_service.py`,
 `services/team_service.py`, `services/analytics_service.py`, `templating.py`, `cabinet_labels.py`,
 `templates/`, `static/`, `scripts/`, `alembic.ini` + `migrations/`, `.env.example`, `.gitignore`,
-`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`, `smoke_test_stage4.py`, `smoke_test_stage5.py`.
+`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`, `smoke_test_stage4.py`, `smoke_test_stage5.py`, `smoke_test_stage6.py`.

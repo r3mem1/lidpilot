@@ -774,7 +774,7 @@ with TestClient(app) as c:
         "https://evil.example",
         "/\\evil.example",
         "javascript:alert(1)",
-        "/admin",
+        "/administrator",  # похожий префикс: /admin с этапа 6 — допустимая цель, это — нет
     ):
         page = anon.get("/login", params={"next": evil})
         m = re.search(r'data-redirect="([^"]*)"', page.text)

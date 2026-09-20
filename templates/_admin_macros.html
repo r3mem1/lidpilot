@@ -1,0 +1,40 @@
+{# Общие фрагменты панели администратора. Всё выводится через автоэкранирование: без |safe. #}
+{% macro status_tag(status) -%}
+  {% set key = status.value if status.value is defined else status %}
+  <span class="tag {% if key == 'ACTIVE' %}tag--ok{% elif key == 'SUSPENDED' %}tag--attention{% else %}tag--info{% endif %}">{{ label('business_status', key) }}</span>
+{%- endmacro %}
+
+{% macro level_tag(level) -%}
+  {% set key = level.value if level.value is defined else level %}
+  <span class="tag {% if key in ('ERROR', 'CRITICAL') %}tag--attention{% elif key == 'WARNING' %}tag--warm{% endif %}">{{ label('log_level', key) }}</span>
+{%- endmacro %}
+
+{% macro integration_tags(integrations) -%}
+  {% if integrations %}
+    {% for i in integrations %}
+      <span class="tag {% if i.status.value == 'ERROR' %}tag--attention{% elif i.status.value == 'ACTIVE' %}tag--ok{% endif %}">{{ i.channel.value|title }}: {{ label('integration_status', i.status) }}</span>
+    {% endfor %}
+  {% else %}<span class="muted">Не подключён</span>{% endif %}
+{%- endmacro %}
+
+{% macro plan_cell(item) -%}
+  <div class="cell-title">{{ label('plan', item.plan) }}</div>
+  <div class="cell-sub">
+    {% if item.expires_at %}до <time datetime="{{ item.expires_at|iso }}" data-local>{{ item.expires_at|dt }}</time>{% else %}без срока{% endif %}
+    {% if item.trial_expired %}<span class="tag tag--attention">Пробный период истёк</span>{% endif %}
+    {% if item.subscription_status.value == 'CANCELED' %}<span class="tag">Отменена</span>{% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro log_row(entry, show_company=true) %}
+  <tr>
+    <td class="muted nowrap"><time datetime="{{ entry.created_at|iso }}" data-local>{{ entry.created_at|dt }}</time></td>
+    <td>{{ level_tag(entry.level) }}</td>
+    <td class="nowrap"><code>{{ entry.event_type }}</code></td>
+    {% if show_company %}<td>{% if entry.business_id %}<a href="/admin/companies/{{ entry.business_id }}">{{ entry.business_name or ('Компания №' ~ entry.business_id) }}</a>{% else %}<span class="muted">Платформа</span>{% endif %}</td>{% endif %}
+    <td class="grow">
+      {{ entry.message }}
+      {% if entry.payload %}<details class="payload"><summary>Данные события</summary><pre>{{ entry.payload|pretty_json }}</pre></details>{% endif %}
+    </td>
+  </tr>
+{% endmacro %}
