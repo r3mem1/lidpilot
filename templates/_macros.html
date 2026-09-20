@@ -1,0 +1,74 @@
+{# Общие фрагменты кабинета. Всё выводится через автоэкранирование: без |safe. #}
+
+{% macro time(value) -%}
+  {%- if value -%}<time datetime="{{ value|iso }}" data-local>{{ value|dt }}</time>{%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+{# Кромка барберского столба: цвет и рисунок кодируют приоритет; текст рядом дублирует его словами. #}
+{% macro pole(priority) -%}
+  <span class="pole pole--{{ (priority.value if priority.value is defined else priority)|lower }}" aria-hidden="true"></span>
+{%- endmacro %}
+
+{% macro priority_tag(priority) -%}
+  {% set key = priority.value if priority.value is defined else priority %}
+  <span class="tag {% if key == 'HOT' %}tag--hot{% elif key == 'WARM' %}tag--warm{% endif %}">{{ label('priority', key) }}</span>
+{%- endmacro %}
+
+{% macro conversation_status_tag(conversation) -%}
+  {% set key = conversation.status.value %}
+  {% if key == 'NEEDS_ATTENTION' %}<span class="tag tag--attention">Требует внимания</span>
+  {% elif key == 'RESOLVED' %}<span class="tag tag--ok">Решён</span>
+  {% else %}<span class="tag">Открыт</span>{% endif %}
+{%- endmacro %}
+
+{% macro customer_name(customer) -%}
+  {{ customer.name or (('@' ~ customer.username) if customer.username else 'Клиент без имени') }}
+{%- endmacro %}
+
+{# Строка диалога: слева кромка приоритета, справа имя, последнее сообщение и метки. #}
+{% macro conversation_row(item, href, current=false) %}
+  {% set conversation, customer, last, lead = item %}
+  <li>
+    <a class="row-link" href="{{ href }}"{% if current %} aria-current="true"{% endif %}>
+      {{ pole(lead.priority if lead else conversation.priority) }}
+      <span class="row-main">
+        <span class="row-top">
+          <span class="row-name">{{ customer_name(customer) }}</span>
+          <span class="row-time">{{ time(conversation.updated_at) }}</span>
+        </span>
+        <span class="row-text">
+          {% if last %}{% if last.sender_type.value != 'CUSTOMER' %}{{ label('sender', last.sender_type) }}: {% endif %}{{ last.text or 'Без текста' }}{% else %}Сообщений нет{% endif %}
+        </span>
+        <span class="row-meta">
+          {{ priority_tag(lead.priority if lead else conversation.priority) }}
+          {% if conversation.status.value == 'NEEDS_ATTENTION' %}
+            <span class="tag tag--attention">{{ label('attention', conversation.attention_reason) if conversation.attention_reason else 'Требует внимания' }}</span>
+          {% elif conversation.status.value == 'RESOLVED' %}
+            <span class="tag tag--ok">Решён</span>
+          {% endif %}
+          {% if conversation.handled_by_manager and conversation.status.value != 'RESOLVED' %}<span class="tag tag--info">Ведёт менеджер</span>{% endif %}
+        </span>
+      </span>
+    </a>
+  </li>
+{% endmacro %}
+
+{% macro empty(title, text) %}
+  <div class="empty">
+    <strong>{{ title }}</strong>
+    <p>{{ text }}</p>
+    {{ caller() if caller else '' }}
+  </div>
+{% endmacro %}
+
+{% macro meter(name, value, total, kind='') %}
+  {% set width = (value * 100 / total) if total else 0 %}
+  <div class="meter">
+    <span>{{ name }}</span>
+    <svg viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="{{ name }}: {{ value }}">
+      <rect class="track" x="0" y="0" width="100" height="10" rx="5"/>
+      <rect class="fill{% if kind %} fill--{{ kind }}{% endif %}" x="0" y="0" width="{{ '%.1f'|format(width) }}" height="10" rx="5"/>
+    </svg>
+    <span class="val">{{ value }}</span>
+  </div>
+{% endmacro %}

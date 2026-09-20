@@ -1,0 +1,87 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Услуги</h1>
+    <p>Прайс, из которого ассистент берёт цены. Услуги, которых здесь нет, он клиенту не назовёт.</p>
+  </div>
+  {% if can_edit %}<div class="actions"><button class="btn btn--primary" type="button" data-service-new>Добавить услугу</button></div>{% endif %}
+</header>
+
+{% if not can_edit %}<div class="notice">Прайс меняет владелец компании. Вы можете его просматривать.</div>{% endif %}
+
+<section class="sheet" data-business="{{ business_id }}">
+  {% if services %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th class="grow">Услуга</th><th class="num">Цена</th><th class="num">Длительность</th><th>Статус</th>{% if can_edit %}<th><span class="visually-hidden">Действия</span></th>{% endif %}</tr></thead>
+        <tbody>
+          {% for s in services %}
+            <tr>
+              <td>
+                <div class="cell-title">{{ s.name }}</div>
+                {% if s.description %}<div class="cell-sub clamp">{{ s.description }}</div>{% endif %}
+              </td>
+              <td class="num">{{ s.price|money }}</td>
+              <td class="num muted">{% if s.duration %}{{ s.duration }} мин{% else %}—{% endif %}</td>
+              <td>{% if s.active %}<span class="tag tag--ok">Активна</span>{% else %}<span class="tag">Скрыта от клиентов</span>{% endif %}</td>
+              {% if can_edit %}
+                <td class="num">
+                  <span class="actions">
+                    <button class="btn btn--small" type="button" data-service-edit
+                            data-id="{{ s.id }}" data-name="{{ s.name }}" data-price="{{ s.price }}" data-duration="{{ s.duration or '' }}"
+                            data-description="{{ s.description or '' }}" data-active="{{ 'true' if s.active else 'false' }}">Изменить</button>
+                    <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/services/{{ s.id }}" data-method="DELETE"
+                            data-confirm="Удалить услугу «{{ s.name }}»? Ассистент перестанет называть её цену." data-confirm-ok="Удалить" data-success="reload">Удалить</button>
+                  </span>
+                </td>
+              {% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {% call m.empty('Услуг пока нет', 'Добавьте первую услугу с ценой — например, «Стрижка, 1 500 ₽». Без прайса ассистент не сможет отвечать на вопросы о цене.') %}
+      {% if can_edit %}<button class="btn btn--primary" type="button" data-service-new>Добавить услугу</button>{% endif %}
+    {% endcall %}
+  {% endif %}
+</section>
+
+{% if can_edit %}
+<dialog class="dialog" id="service-dialog" aria-labelledby="service-title">
+  <form data-service-form novalidate>
+    <h2 id="service-title">Услуга</h2>
+    <input type="hidden" name="id">
+    <div class="field">
+      <label for="s-name">Название</label>
+      <input class="input" id="s-name" name="name" required maxlength="255" placeholder="Стрижка">
+    </div>
+    <div class="form-row">
+      <div class="field">
+        <label for="s-price">Цена, ₽</label>
+        <input class="input" id="s-price" name="price" required inputmode="decimal" placeholder="1500">
+      </div>
+      <div class="field">
+        <label for="s-duration">Длительность, мин</label>
+        <input class="input" id="s-duration" name="duration" inputmode="numeric" placeholder="60">
+      </div>
+    </div>
+    <div class="field">
+      <label for="s-description">Описание</label>
+      <textarea class="textarea" id="s-description" name="description" placeholder="Что входит в услугу"></textarea>
+    </div>
+    <div class="field">
+      <label class="switch"><input type="checkbox" name="active" checked><span><strong>Показывать клиентам</strong><span class="hint">Скрытую услугу ассистент не называет.</span></span></label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn--primary" type="submit">Сохранить</button>
+      <button class="btn" type="button" data-dialog-close>Отмена</button>
+      <span class="form-status" data-status role="status"></span>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}

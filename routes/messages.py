@@ -270,3 +270,13 @@ def get_customer(
             for conversation, owner, last, lead in history
         ],
     )
+
+
+@router.get("/businesses/{business_id}/inbox/state")
+def inbox_state(
+    ctx: BusinessContext = Depends(require_business_roles(*ANY_MEMBER)),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Снимок входящих для кабинета (вне §11): по нему страница «Сообщения» узнаёт
+    о новых сообщениях без перезагрузки."""
+    return message_service.inbox_state(db, ctx)

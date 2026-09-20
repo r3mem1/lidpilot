@@ -31,6 +31,7 @@ from ai.pipeline import Decision, EscalationReason
 from config import settings
 from models import (
     AiResponseStatus,
+    AiTone,
     BusinessStatus,
     Channel,
     ConversationStatus,
@@ -122,6 +123,8 @@ class BusinessCreate(BaseModel):
     working_hours: str | None = Field(default=None, max_length=500)
     description: str | None = None
     ai_rules: str | None = None
+    ai_tone: AiTone = AiTone.FRIENDLY
+    ai_auto_reply: bool = True
     escalation_contact: str | None = Field(default=None, max_length=255)
 
 
@@ -137,7 +140,17 @@ class BusinessUpdate(BaseModel):
     working_hours: str | None = Field(default=None, max_length=500)
     description: str | None = None
     ai_rules: str | None = None
+    ai_tone: AiTone | None = None
+    ai_auto_reply: bool | None = None
     escalation_contact: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def _required_fields_not_null(self) -> BusinessUpdate:
+        """Обязательные поля можно менять, но не обнулять: иначе ошибка БД (500)."""
+        for field in ("name", "ai_tone", "ai_auto_reply"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} не может быть null")
+        return self
 
 
 class BusinessOut(ORMModel):
@@ -150,6 +163,8 @@ class BusinessOut(ORMModel):
     working_hours: str | None
     description: str | None
     ai_rules: str | None
+    ai_tone: AiTone
+    ai_auto_reply: bool
     escalation_contact: str | None
     status: BusinessStatus
     created_at: datetime
@@ -414,3 +429,62 @@ class ConversationState(BaseModel):
 
     conversation: ConversationOut
     lead: LeadOut | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Кабинет (этап 5): сотрудники, приглашения, аналитика (раздел 13)
+# --------------------------------------------------------------------------- #
+class MemberRoleUpdate(BaseModel):
+    role: MemberRole
+
+
+class InvitationCreate(_EmailMixin):
+    role: MemberRole = MemberRole.MANAGER
+
+
+class InvitationOut(BaseModel):
+    id: int
+    email: EmailStr
+    role: MemberRole
+    expires_at: datetime
+    created_at: datetime
+
+
+class InvitationCreated(InvitationOut):
+    """Ссылка показывается ОДИН раз: в БД хранится только хеш токена."""
+
+    invite_url: str
+
+
+class InvitationAccept(BaseModel):
+    # SecretStr и без ограничений длины: значение не должно попасть в тело ошибки 422.
+    token: SecretStr
+
+
+class DailyPoint(BaseModel):
+    date: str
+    incoming: int
+    ai: int
+    manager: int
+
+
+class AnalyticsOut(BaseModel):
+    """Базовые показатели за период (раздел 13). Границы периода — UTC."""
+
+    period_start: datetime
+    period_end: datetime
+    conversations_new: int
+    messages_incoming: int
+    customers_active: int
+    manager_replies: int
+    ai_answered: int
+    ai_escalated: int
+    ai_share_percent: int | None
+    ai_avg_latency_ms: int | None
+    ai_errors: int
+    delivery_failed: int
+    leads_total: int
+    leads_by_priority: dict[str, int]
+    leads_by_status: dict[str, int]
+    intents: dict[str, int]
+    daily: list[DailyPoint]

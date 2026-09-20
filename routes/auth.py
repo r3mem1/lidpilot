@@ -24,7 +24,11 @@ from schemas import (
     UserRegisterRequest,
 )
 from services import audit_service, auth_service, rate_limit_service
-from services.access_service import get_current_user, get_current_user_optional
+from services.access_service import (
+    enforce_same_origin,
+    get_current_user,
+    get_current_user_optional,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 # GET /me по ТЗ находится в корне, без префикса /auth.
@@ -51,6 +55,7 @@ def register(
     request: Request,
     db: Session = Depends(get_db),
 ) -> User:
+    enforce_same_origin(request)
     rate_limit_service.enforce_auth_rate_limit(request, "auth:register")
 
     user = auth_service.register_user(db, payload)
@@ -73,6 +78,7 @@ def login(
     response: Response,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
+    enforce_same_origin(request)
     rate_limit_service.enforce_auth_rate_limit(request, "auth:login")
 
     user = auth_service.authenticate_user(db, payload.email, payload.password)

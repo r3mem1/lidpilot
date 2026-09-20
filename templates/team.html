@@ -1,0 +1,100 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Сотрудники</h1>
+    <p>Владелец управляет компанией целиком, менеджер отвечает клиентам и работает с лидами — без настроек и аналитики.</p>
+  </div>
+  <div class="actions"><button class="btn btn--primary" type="button" data-invite-new>Пригласить сотрудника</button></div>
+</header>
+
+<section class="sheet">
+  <div class="sheet-head"><h2>Команда</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th class="grow">Сотрудник</th><th>Роль</th><th>В компании с</th><th><span class="visually-hidden">Действия</span></th></tr></thead>
+      <tbody>
+        {% for member, person in members %}
+          {% set is_last_owner = member.role.value == 'OWNER' and owners_count <= 1 %}
+          <tr>
+            <td>
+              <span class="cell-title">{{ person.email }}</span>
+              {% if person.id == user.id %}<span class="tag tag--info">Это вы</span>{% endif %}
+            </td>
+            <td>
+              <select class="select select--small" data-api-change data-url="/businesses/{{ business_id }}/members/{{ person.id }}" data-method="PATCH" data-field="role" data-success="reload" aria-label="Роль {{ person.email }}"{% if is_last_owner %} disabled title="В компании должен остаться хотя бы один владелец"{% endif %}>
+                {% for key in ['OWNER', 'MANAGER'] %}<option value="{{ key }}"{% if member.role.value == key %} selected{% endif %}>{{ label('role', key) }}</option>{% endfor %}
+              </select>
+            </td>
+            <td class="muted">{{ m.time(member.created_at) }}</td>
+            <td class="num">
+              {% if not is_last_owner %}
+                <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/businesses/{{ business_id }}/members/{{ person.id }}" data-method="DELETE"
+                        data-confirm="Удалить {{ person.email }} из компании? Его лиды вернутся в общую очередь." data-confirm-ok="Удалить" data-success="{{ 'redirect' if person.id == user.id else 'reload' }}" data-redirect="/cabinet">Удалить</button>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="sheet">
+  <div class="sheet-head"><h2>Приглашения</h2></div>
+  {% if invitations %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th class="grow">Почта</th><th>Роль</th><th>Действует до</th><th><span class="visually-hidden">Действия</span></th></tr></thead>
+        <tbody>
+          {% for inv in invitations %}
+            <tr>
+              <td class="cell-title">{{ inv.email }}</td>
+              <td>{{ label('role', inv.role) }}</td>
+              <td class="muted">{{ m.time(inv.expires_at) }}</td>
+              <td class="num"><button class="btn btn--small" type="button" data-api-click data-url="/businesses/{{ business_id }}/invitations/{{ inv.id }}" data-method="DELETE" data-confirm="Отозвать приглашение для {{ inv.email }}? Ссылка перестанет работать." data-confirm-ok="Отозвать" data-success="reload">Отозвать</button></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {% call m.empty('Действующих приглашений нет', 'Пригласите менеджера: система создаст ссылку, которую вы передадите ему сами — письма не отправляются.') %}{% endcall %}
+  {% endif %}
+</section>
+
+<dialog class="dialog" id="invite-dialog" aria-labelledby="invite-title">
+  <form data-invite-form data-url="/businesses/{{ business_id }}/invitations" novalidate>
+    <h2 id="invite-title">Пригласить сотрудника</h2>
+    <div data-invite-step="form">
+      <div class="field">
+        <label for="inv-email">Электронная почта</label>
+        <input class="input" id="inv-email" name="email" type="email" required autocomplete="off">
+        <span class="hint">Принять приглашение сможет только человек с этим адресом.</span>
+      </div>
+      <div class="field">
+        <label for="inv-role">Роль</label>
+        <select class="select" id="inv-role" name="role">
+          <option value="MANAGER">Менеджер</option>
+          <option value="OWNER">Владелец</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Создать ссылку</button>
+        <button class="btn" type="button" data-dialog-close>Отмена</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+    </div>
+    <div data-invite-step="done" hidden>
+      <p>Ссылка создана. Передайте её сотруднику — она действует {{ invitation_ttl_days }} дн. и показывается только сейчас.</p>
+      <div class="copybox">
+        <input class="input" data-invite-link readonly aria-label="Ссылка-приглашение">
+        <button class="btn btn--primary" type="button" data-copy-link>Скопировать</button>
+      </div>
+      <div class="form-actions"><button class="btn" type="button" data-dialog-close data-reload-on-close>Готово</button></div>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

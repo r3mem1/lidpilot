@@ -19,15 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import settings
 from database import Base, SessionLocal, engine
@@ -35,11 +37,14 @@ from models import LogLevel, User, UserRole, UserStatus
 from routes import admin as admin_routes
 from routes import auth as auth_routes
 from routes import businesses as businesses_routes
+from routes import cabinet as cabinet_routes
 from routes import integrations as integrations_routes
 from routes import leads as leads_routes
 from routes import messages as messages_routes
+from routes import team as team_routes
 from services import audit_service, message_service
 from services.auth_service import hash_password
+from templating import templates
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -52,6 +57,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("leadpilot")
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# Windows не знает тип .woff2, а строгий nosniff не позволит браузеру угадать его.
+mimetypes.add_type("font/woff2", ".woff2")
 
 
 def _check_production_safety() -> None:
@@ -174,9 +182,8 @@ if settings.force_https:
 
     app.add_middleware(HTTPSRedirectMiddleware)
 
-# Статика и шаблоны кабинета (раздел 9: Jinja2). Страницы — этап 5.
+# Статика кабинета (раздел 9: HTML/CSS/JS + Jinja2, шаблоны — templating.py).
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # --- Этап 1 ---
 app.include_router(auth_routes.router)
@@ -184,10 +191,69 @@ app.include_router(auth_routes.me_router)
 app.include_router(businesses_routes.router)
 # --- Этап 3 ---
 app.include_router(integrations_routes.router)
+# --- Этап 5: сотрудники и приглашения (раздел 13) ---
+app.include_router(team_routes.router)
 app.include_router(messages_routes.router)  # webhook и диалоги (ручной ответ — этап 4)
 # --- Зарегистрированы заранее, наполняются на своих этапах ---
 app.include_router(leads_routes.router)  # этап 4
 app.include_router(admin_routes.router)  # этап 6
+# --- Этап 5: кабинет бизнеса (страницы) ---
+app.include_router(cabinet_routes.router)
+
+
+# Страницы кабинета (этап 5): им задаётся строгая политика содержимого. Swagger (/docs)
+# использует внешние скрипты и сюда не входит — в production он закрыт.
+_CABINET_PREFIXES = ("/cabinet", "/login", "/register", "/invite")
+_CABINET_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Раздел 16: заголовки безопасности для всех ответов, CSP и запрет кэширования
+    для страниц кабинета (в них данные клиентов)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    if settings.force_https:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if request.url.path.startswith(_CABINET_PREFIXES):
+        response.headers["Content-Security-Policy"] = _CABINET_CSP
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.exception_handler(cabinet_routes.LoginRequired)
+async def login_required_handler(request: Request, exc: cabinet_routes.LoginRequired):
+    """Страница кабинета без входа: на форму входа, с возвратом после авторизации."""
+    return cabinet_routes.login_redirect(exc)
+
+
+_ERROR_TEXT = {
+    401: ("Нужно войти", "Войдите в кабинет, чтобы продолжить."),
+    403: ("Недостаточно прав", "Этот раздел доступен только владельцу компании."),
+    404: ("Страница не найдена", "Такой страницы нет, или у вас нет к ней доступа."),
+}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    """Ошибки страниц кабинета показываются как HTML, ошибки API — как JSON."""
+    if request.url.path.startswith(_CABINET_PREFIXES):
+        title, text = _ERROR_TEXT.get(
+            exc.status_code, ("Что-то пошло не так", "Попробуйте ещё раз чуть позже.")
+        )
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            {"title": title, "text": text, "code": exc.status_code},
+            status_code=exc.status_code,
+        )
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(Exception)
@@ -217,12 +283,3 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 def health() -> dict:
     """Проверка живости для хостинга (Render/Railway)."""
     return {"status": "ok", "version": settings.app_version}
-
-
-@app.get("/", tags=["service"])
-def root() -> dict:
-    return {
-        "app": settings.app_name,
-        "version": settings.app_version,
-        "stage": "3 — Telegram",
-    }

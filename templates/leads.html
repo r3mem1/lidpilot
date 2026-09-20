@@ -1,1 +1,95 @@
-<!-- Этап 5 (раздел 13 ТЗ): страница «leads» кабинета на Jinja2. Заполняется на этапе 5. -->
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Лиды</h1>
+    <p>Клиенты, которым нужно внимание: сначала горячие. Меняйте статус и назначайте ответственного прямо в списке.</p>
+  </div>
+</header>
+
+<section class="sheet">
+  <form class="sheet-body" method="get" action="/cabinet/{{ business_id }}/leads">
+    <div class="period">
+      <div class="field">
+        <label for="f-priority">Приоритет</label>
+        <select class="select select--small" id="f-priority" name="priority">
+          <option value="">Любой</option>
+          {% for k in ['HOT', 'WARM', 'COLD'] %}<option value="{{ k }}"{% if filters.priority == k %} selected{% endif %}>{{ label('priority', k) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-status">Статус</label>
+        <select class="select select--small" id="f-status" name="status">
+          <option value="">Любой</option>
+          {% for s in lead_statuses %}<option value="{{ s }}"{% if filters.status == s %} selected{% endif %}>{{ label('lead_status', s) }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-assigned">Ответственный</label>
+        <select class="select select--small" id="f-assigned" name="assigned">
+          <option value="">Любой</option>
+          <option value="none"{% if filters.assigned == 'none' %} selected{% endif %}>Не назначен</option>
+          {% for u in members %}<option value="{{ u.id }}"{% if filters.assigned == u.id|string %} selected{% endif %}>{{ u.email }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-from">Создан с</label>
+        <input class="input input--small" id="f-from" name="date_from" type="date" value="{{ filters.date_from }}">
+      </div>
+      <div class="field">
+        <label for="f-to">по</label>
+        <input class="input input--small" id="f-to" name="date_to" type="date" value="{{ filters.date_to }}">
+      </div>
+      <div class="actions">
+        <button class="btn btn--small btn--primary" type="submit">Показать</button>
+        <a class="btn btn--small" href="/cabinet/{{ business_id }}/leads">Сбросить</a>
+      </div>
+    </div>
+  </form>
+</section>
+
+<section class="sheet">
+  {% if rows %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr><th class="pole-cell"><span class="visually-hidden">Приоритет</span></th><th>Клиент</th><th class="grow">Обращение</th><th>Статус</th><th>Ответственный</th><th>Создан</th></tr>
+        </thead>
+        <tbody>
+          {% for lead, conversation, customer in rows %}
+            <tr>
+              <td class="pole-cell">{{ m.pole(lead.priority) }}</td>
+              <td class="cell-client">
+                <a class="cell-title" href="/cabinet/{{ business_id }}/messages?c={{ conversation.id }}">{{ m.customer_name(customer) }}</a>
+                <div class="cell-sub">{{ m.priority_tag(lead.priority) }}</div>
+              </td>
+              <td>
+                <span class="tag">{{ label('intent', lead.intent) }}</span>
+                <div class="cell-sub clamp">{{ lead.reason|reason }}</div>
+              </td>
+              <td>
+                <select class="select select--small" data-api-change data-url="/leads/{{ lead.id }}" data-method="PATCH" data-field="status" aria-label="Статус лида {{ m.customer_name(customer) }}">
+                  {% for s in lead_statuses %}<option value="{{ s }}"{% if lead.status.value == s %} selected{% endif %}>{{ label('lead_status', s) }}</option>{% endfor %}
+                </select>
+              </td>
+              <td>
+                <select class="select select--small" data-api-change data-url="/leads/{{ lead.id }}" data-method="PATCH" data-field="assigned_to" data-type="int" data-empty="null" aria-label="Ответственный за лид {{ m.customer_name(customer) }}">
+                  <option value="">Не назначен</option>
+                  {% for u in members %}<option value="{{ u.id }}"{% if lead.assigned_to == u.id %} selected{% endif %}>{{ u.email }}</option>{% endfor %}
+                </select>
+              </td>
+              <td class="muted nowrap">{{ m.time(lead.created_at) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if has_more %}
+      <div class="sheet-body"><a class="btn btn--small" href="?offset={{ next_offset }}{% for k, v in filters.items() if v %}&amp;{{ k }}={{ v|urlencode }}{% endfor %}">Показать ещё</a></div>
+    {% endif %}
+  {% else %}
+    {% call m.empty('Лидов по этим условиям нет', 'Лид появляется, когда клиент спрашивает цену, просит записать или жалуется. Попробуйте сбросить фильтры.') %}{% endcall %}
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,88 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Настройки</h1>
+    <p>Данные компании, которые ассистент использует в ответах, и подключение каналов связи.</p>
+  </div>
+</header>
+
+<div class="grid grid--main">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Данные компании</h2><span class="tag">{{ label('business_status', business.status) }}</span></div>
+    <form class="sheet-body" data-api-form data-method="PUT" data-url="/businesses/{{ business_id }}" data-success="message:Данные сохранены" novalidate>
+      <div class="field">
+        <label for="name">Название</label>
+        <input class="input" id="name" name="name" required maxlength="255" value="{{ business.name }}">
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="category">Чем занимаетесь</label>
+          <input class="input" id="category" name="category" maxlength="120" data-empty="null" value="{{ business.category or '' }}">
+        </div>
+        <div class="field">
+          <label for="phone">Телефон</label>
+          <input class="input" id="phone" name="phone" maxlength="50" data-empty="null" value="{{ business.phone or '' }}" inputmode="tel">
+        </div>
+      </div>
+      <div class="field">
+        <label for="address">Адрес</label>
+        <input class="input" id="address" name="address" maxlength="500" data-empty="null" value="{{ business.address or '' }}">
+        <span class="hint">Ассистент называет только этот адрес. Если поле пусто, адрес он не назовёт.</span>
+      </div>
+      <div class="field">
+        <label for="working_hours">График работы</label>
+        <input class="input" id="working_hours" name="working_hours" maxlength="500" data-empty="null" value="{{ business.working_hours or '' }}">
+      </div>
+      <div class="field">
+        <label for="escalation_contact">Кому передавать сложные обращения</label>
+        <input class="input" id="escalation_contact" name="escalation_contact" maxlength="255" data-empty="null" value="{{ business.escalation_contact or '' }}" placeholder="Имя, телефон или @ник администратора">
+      </div>
+      <div class="field">
+        <label for="description">О компании</label>
+        <textarea class="textarea" id="description" name="description" data-empty="null" maxlength="4000">{{ business.description or '' }}</textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Сохранить</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head">
+      <h2>Telegram</h2>
+      {% if telegram and telegram.status.value == 'ACTIVE' %}<span class="tag tag--ok">Подключён</span>
+      {% elif telegram and telegram.status.value == 'ERROR' %}<span class="tag tag--attention">Ошибка</span>
+      {% else %}<span class="tag">Не подключён</span>{% endif %}
+    </div>
+    <div class="sheet-body">
+      {% if telegram and telegram.status.value == 'ACTIVE' %}
+        <p>Бот <strong>@{{ telegram.external_account_name or 'без имени' }}</strong> принимает сообщения клиентов.</p>
+        <p class="muted">Адрес webhook: {{ webhook_url or 'не задан' }}</p>
+        <div class="form-actions">
+          <button class="btn btn--danger" type="button" data-api-click data-url="/businesses/{{ business_id }}/integrations/telegram" data-method="DELETE"
+                  data-confirm="Отключить бота? Клиенты перестанут получать ответы, пока вы не подключите его снова." data-confirm-ok="Отключить" data-success="reload">Отключить бота</button>
+        </div>
+      {% else %}
+        {% if telegram and telegram.last_error %}<div class="notice notice--error" role="alert">Не удалось подключить: {{ telegram.last_error }}</div>{% endif %}
+        {% if not webhook_ready %}
+          <div class="notice notice--warn"><span>Telegram присылает сообщения только на адрес с HTTPS. Сначала задайте <code>PUBLIC_BASE_URL</code> в настройках сервера (для проверки на своём компьютере подойдёт туннель cloudflared).</span></div>
+        {% endif %}
+        <p class="muted">Создайте бота у @BotFather в Telegram, скопируйте выданный токен и вставьте его ниже. Токен хранится в зашифрованном виде.</p>
+        <form data-api-form data-method="POST" data-url="/businesses/{{ business_id }}/integrations/telegram" data-success="reload" novalidate>
+          <div class="field">
+            <label for="bot_token">Токен бота</label>
+            <input class="input" id="bot_token" name="bot_token" type="password" required autocomplete="off" spellcheck="false" placeholder="123456789:AA…">
+          </div>
+          <div class="form-actions">
+            <button class="btn btn--primary" type="submit"{% if not webhook_ready %} disabled{% endif %}>Подключить бота</button>
+            <span class="form-status" data-status role="status"></span>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

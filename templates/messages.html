@@ -1,1 +1,141 @@
-<!-- Этап 5 (раздел 13 ТЗ): страница «messages» кабинета на Jinja2. Заполняется на этапе 5. -->
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Сообщения</h1>
+    <p>Диалоги с клиентами. Ассистент отвечает сам, а то, что требует человека, ждёт вас в статусе «Требует внимания».</p>
+  </div>
+</header>
+
+{% set base = '/cabinet/' ~ business_id ~ '/messages' %}
+<section class="inbox" data-view="{{ 'thread' if explicit else 'list' }}"
+         data-poll="/businesses/{{ business_id }}/inbox/state"
+         data-last-message="{{ last_message_id }}">
+  <div class="inbox-list">
+    <div class="inbox-filters">
+      <div class="tabs" role="tablist" aria-label="Статус диалога">
+        {% for key, title in [('', 'Все'), ('NEEDS_ATTENTION', 'Требуют внимания'), ('OPEN', 'Открытые'), ('RESOLVED', 'Решённые')] %}
+          <a class="tab" role="tab" href="{{ base }}{% if key or priority_filter %}?{% if key %}status={{ key }}{% endif %}{% if key and priority_filter %}&amp;{% endif %}{% if priority_filter %}priority={{ priority_filter }}{% endif %}{% endif %}" aria-current="{{ 'true' if status_filter == key else 'false' }}">{{ title }}<span class="n">{{ counts['ALL'] if not key else counts[key] }}</span></a>
+        {% endfor %}
+      </div>
+      <div class="tabs" aria-label="Приоритет">
+        {% for key, title in [('', 'Любой приоритет'), ('HOT', 'Горячие'), ('WARM', 'Тёплые'), ('COLD', 'Холодные')] %}
+          <a class="tab" href="{{ base }}{% if key or status_filter %}?{% if status_filter %}status={{ status_filter }}{% endif %}{% if status_filter and key %}&amp;{% endif %}{% if key %}priority={{ key }}{% endif %}{% endif %}" aria-current="{{ 'true' if priority_filter == key else 'false' }}">{{ title }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="inbox-scroll">
+      {% if rows %}
+        <ul class="rows">
+          {% for item in rows %}
+            {% set href = base ~ '?c=' ~ item[0].id ~ ('&status=' ~ status_filter if status_filter else '') ~ ('&priority=' ~ priority_filter if priority_filter else '') %}
+            {{ m.conversation_row(item, href, detail and detail.conversation.id == item[0].id) }}
+          {% endfor %}
+        </ul>
+        {% if has_more %}
+          <div class="sheet-body"><a class="btn btn--small" href="{{ base }}?offset={{ next_offset }}{% if status_filter %}&amp;status={{ status_filter }}{% endif %}{% if priority_filter %}&amp;priority={{ priority_filter }}{% endif %}">Показать ещё</a></div>
+        {% endif %}
+      {% else %}
+        {% call m.empty('Диалогов нет', 'Здесь появятся переписки с клиентами, как только кто-то напишет вашему боту.') %}
+          {% if is_owner %}<a class="btn btn--small" href="/cabinet/{{ business_id }}/settings">Подключить Telegram-бота</a>{% endif %}
+        {% endcall %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="thread">
+    <div class="newer" data-newer hidden>
+      <span>Пришли новые сообщения.</span>
+      <button class="btn btn--small" type="button" data-reload>Обновить</button>
+    </div>
+    {% if detail %}
+      {% set conv = detail.conversation %}
+      {% set lead = detail.lead %}
+      <div class="thread-head">
+        <div class="thread-title">
+          <a class="btn btn--small back-link" href="{{ base }}{% if status_filter %}?status={{ status_filter }}{% endif %}">Назад</a>
+          <h2>{{ m.customer_name(detail.customer) }}</h2>
+          {{ m.priority_tag(lead.priority if lead else conv.priority) }}
+          {{ m.conversation_status_tag(conv) }}
+          {% if conv.handled_by_manager and conv.status.value != 'RESOLVED' %}<span class="tag tag--info">Ведёт менеджер</span>{% endif %}
+        </div>
+        <div class="thread-tools">
+          {% if detail.customer.username %}<span class="muted">@{{ detail.customer.username }}</span>{% endif %}
+          <a href="/cabinet/{{ business_id }}/customers/{{ detail.customer.id }}">История клиента</a>
+          {% if lead %}
+            <label>Статус лида
+              <select class="select select--small" data-api-change data-url="/leads/{{ lead.id }}" data-method="PATCH" data-field="status" data-success="reload" aria-label="Статус лида">
+                {% for s in lead_statuses %}<option value="{{ s }}"{% if lead.status.value == s %} selected{% endif %}>{{ label('lead_status', s) }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>Ответственный
+              <select class="select select--small" data-api-change data-url="/leads/{{ lead.id }}" data-method="PATCH" data-field="assigned_to" data-type="int" data-empty="null" aria-label="Ответственный">
+                <option value="">Не назначен</option>
+                {% for u in members %}<option value="{{ u.id }}"{% if lead.assigned_to == u.id %} selected{% endif %}>{{ u.email }}</option>{% endfor %}
+              </select>
+            </label>
+          {% endif %}
+          {% if conv.status.value != 'RESOLVED' %}
+            <button class="btn btn--small" type="button" data-api-click data-url="/conversations/{{ conv.id }}/resolve" data-method="POST" data-success="reload">Отметить решённым</button>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="why">
+        {% if conv.status.value == 'NEEDS_ATTENTION' and conv.attention_reason %}
+          <span class="why-alert"><b>Почему диалог у вас:</b> {{ label('attention', conv.attention_reason) }}.</span>
+        {% endif %}
+        <span>
+          <b>Как ассистент понял обращение:</b>
+          {% if lead %}{{ label('intent', lead.intent).lower() }}, приоритет «{{ label('priority', lead.priority).lower() }}».{% if lead.reason %} {{ lead.reason|reason }}.{% endif %}
+          {% else %}лид не создан — обращение не похоже на заявку клиента.{% endif %}
+        </span>
+        {% if detail.last_decision %}
+          <span class="muted">{{ label('ai_status', detail.last_decision.status) }}{% if detail.last_decision.model %}, модель {{ detail.last_decision.model }}{% endif %}{% if detail.last_decision.latency_ms is not none %}, {{ detail.last_decision.latency_ms }} мс{% endif %}</span>
+        {% endif %}
+      </div>
+
+      <div class="log" id="log" tabindex="0" aria-label="Переписка">
+        {% for msg in detail.messages %}
+          {% set kind = msg.sender_type.value|lower %}
+          <div class="bubble bubble--{{ kind }}">
+            <div class="bubble-body">{{ msg.text or 'Без текста' }}</div>
+            <div class="bubble-meta">
+              <span>{{ label('sender', msg.sender_type) }}{% if kind == 'manager' and msg.author_user_id in detail.authors %}: {{ detail.authors[msg.author_user_id] }}{% endif %}</span>
+              <span>{{ m.time(msg.created_at) }}</span>
+              {% if kind == 'customer' and msg.intent %}<span>{{ label('intent', msg.intent) }}</span>{% endif %}
+              {% if kind != 'customer' and msg.delivery_status %}
+                {% set ds = msg.delivery_status.value %}
+                <span class="{{ 'fail' if ds == 'FAILED' else ('ok' if ds == 'SENT' else '') }}">{{ label('delivery', ds) }}{% if ds == 'FAILED' and msg.delivery_error %}: {{ msg.delivery_error }}{% endif %}</span>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <form class="reply" data-api-form data-method="POST" data-url="/conversations/{{ conv.id }}/reply" data-success="reload" novalidate>
+        <label class="visually-hidden" for="reply-text">Ответ клиенту</label>
+        <textarea class="textarea" id="reply-text" name="text" required maxlength="4000" data-submit-hotkey placeholder="Напишите ответ клиенту"{% if business.status.value == 'SUSPENDED' and not is_owner %} disabled{% endif %}></textarea>
+        <div class="reply-foot">
+          <span class="hint">
+            {% if conv.status.value == 'RESOLVED' %}Диалог закрыт: ответ откроет его заново.
+            {% elif conv.handled_by_manager %}Диалог ведёте вы: ассистент не отвечает, пока вы не отметите его решённым.
+            {% else %}После вашего ответа ассистент перестанет отвечать в этом диалоге.{% endif %}
+            Ctrl+Enter — отправить.
+          </span>
+          <span class="actions">
+            <span class="form-status" data-status role="status"></span>
+            <button class="btn btn--primary" type="submit">Отправить</button>
+          </span>
+        </div>
+      </form>
+    {% else %}
+      <div class="thread-empty">
+        {% call m.empty('Выберите диалог', 'Слева список переписок. Откройте любую, чтобы прочитать историю и ответить клиенту.') %}{% endcall %}
+      </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

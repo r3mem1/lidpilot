@@ -1,0 +1,5 @@
+Golos Text — © The Golos Text Project Authors (Paratype).
+Unbounded — © The Unbounded Project Authors (NaN).
+Оба шрифта распространяются по лицензии SIL Open Font License 1.1:
+https://openfontlicense.org — свободное использование, включая коммерческое,
+при сохранении этого уведомления. Файлы получены из Google Fonts (подмножества cyrillic и latin).

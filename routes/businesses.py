@@ -17,6 +17,8 @@ Depends(require_business_roles(...)) / Depends(require_service_access(...)):
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,7 @@ from models import MemberRole, Service, User
 from schemas import (
     AIPreviewRequest,
     AIPreviewResponse,
+    AnalyticsOut,
     BusinessCreate,
     BusinessMemberCreate,
     BusinessMemberOut,
@@ -36,7 +39,7 @@ from schemas import (
     ServiceOut,
     ServiceUpdate,
 )
-from services import ai_service, business_service
+from services import ai_service, analytics_service, business_service, rate_limit_service
 from services.access_service import (
     BusinessContext,
     get_current_user,
@@ -188,6 +191,18 @@ def ai_preview(
 ):
     if not settings.ai_preview_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    # Каждая проверка — платный запрос к LLM: ограничиваем частоту на пользователя.
+    if settings.rate_limit_enabled and not rate_limit_service.hit(
+        "ai:preview",
+        str(ctx.user.id),
+        limit=settings.ai_preview_rate_limit_per_minute,
+        window_seconds=60,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Слишком много проверок, повторите через минуту",
+            headers={"Retry-After": "60"},
+        )
 
     history = [HistoryTurn(role=turn.role, text=turn.text) for turn in payload.history]
     result = ai_service.process_message(
@@ -213,3 +228,19 @@ def ai_preview(
         prompt_version=result.response.prompt_version if result.response else None,
         latency_ms=result.latency_ms,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Аналитика (раздел 13: «Аналитика — базовые показатели за выбранный период»)
+# Вне минимального списка раздела 11. Только OWNER: показатели работы компании
+# относятся к настройкам владельца (раздел 5).
+# --------------------------------------------------------------------------- #
+@router.get("/businesses/{business_id}/analytics", response_model=AnalyticsOut)
+def get_analytics(
+    date_from: datetime | None = Query(default=None, description="Начало периода (UTC)"),
+    date_to: datetime | None = Query(default=None, description="Конец периода (UTC)"),
+    ctx: BusinessContext = Depends(require_business_roles(*OWNER_ONLY)),
+    db: Session = Depends(get_db),
+):
+    start, end = analytics_service.resolve_period(date_from, date_to)
+    return analytics_service.period_summary(db, ctx, start, end)

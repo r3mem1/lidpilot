@@ -74,6 +74,9 @@ class BusinessKnowledge:
     escalation_contact: str | None = None
     services: tuple[ServiceInfo, ...] = field(default_factory=tuple)
     has_schedule_integration: bool = False
+    # Настройки владельца (раздел 13): стиль ответа и разрешение отвечать автоматически.
+    tone: str = "FRIENDLY"
+    auto_reply: bool = True
 
     # ------------------------------------------------------------------ #
     # Представление для промпта

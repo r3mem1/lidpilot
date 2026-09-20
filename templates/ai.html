@@ -1,0 +1,77 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>AI-ассистент</h1>
+    <p>Как ассистент говорит с вашими клиентами и что ему можно делать без вас.</p>
+  </div>
+</header>
+
+{% if offline %}
+  <div class="notice notice--warn"><span>Сейчас ассистент работает в упрощённом режиме: ответы собираются по шаблону из вашего прайса, без языковой модели. Чтобы включить модель, задайте <code>AI_PROVIDER</code>, <code>AI_API_KEY</code> и <code>AI_MODEL</code> в настройках сервера.</span></div>
+{% endif %}
+
+<div class="grid grid--main">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Настройки ассистента</h2></div>
+    <form class="sheet-body" data-api-form data-method="PUT" data-url="/businesses/{{ business_id }}" data-success="message:Настройки сохранены" novalidate>
+      <div class="field">
+        <span class="label">Автоответы</span>
+        <label class="switch">
+          <input type="checkbox" name="ai_auto_reply"{% if business.ai_auto_reply %} checked{% endif %}>
+          <span><strong>Отвечать клиентам автоматически</strong><span class="hint">Если выключить, ассистент только разбирает обращения и создаёт лиды, а отвечаете вы сами. Клиент получит короткое сообщение, что сотрудник ответит.</span></span>
+        </label>
+      </div>
+
+      <div class="field">
+        <span class="label">Стиль ответов</span>
+        {% for key in ['FRIENDLY', 'FORMAL', 'BRIEF'] %}
+          <label class="choice">
+            <input type="radio" name="ai_tone" value="{{ key }}"{% if business.ai_tone.value == key %} checked{% endif %}>
+            <span><strong>{{ label('tone', key) }}</strong><span>{{ tone_hints[key] }}</span></span>
+          </label>
+        {% endfor %}
+      </div>
+
+      <div class="field">
+        <label for="ai_rules">Правила общения</label>
+        <textarea class="textarea" id="ai_rules" name="ai_rules" data-empty="null" maxlength="4000" placeholder="Например: не обсуждать скидки, всегда предлагать записаться по телефону.">{{ business.ai_rules or '' }}</textarea>
+        <span class="hint">Ассистент соблюдает эти правила, но цены, время, адрес и скидки называет только из данных компании — правила этого не отменяют.</span>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Сохранить</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head"><h2>Проверьте ответ</h2></div>
+    <div class="sheet-body">
+      {% if preview_enabled %}
+        <form data-ai-preview data-url="/businesses/{{ business_id }}/ai/preview" novalidate>
+          <div class="field">
+            <label for="preview-text">Сообщение клиента</label>
+            <textarea class="textarea" id="preview-text" name="text" required maxlength="4000" data-submit-hotkey placeholder="Сколько стоит стрижка и борода?"></textarea>
+            <span class="hint">Сохранённые настройки и прайс применяются сразу. Ничего клиентам не отправляется.</span>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn--primary" type="submit">Проверить</button>
+            <span class="form-status" data-status role="status"></span>
+          </div>
+        </form>
+        <div class="why" data-preview-result hidden>
+          <b data-preview-decision></b>
+          <span data-preview-reply></span>
+          <span class="muted" data-preview-meta></span>
+        </div>
+      {% else %}
+        <p class="muted">Проверка ответов отключена в настройках сервера.</p>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

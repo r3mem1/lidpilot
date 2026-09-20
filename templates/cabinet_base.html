@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block body_attrs %} data-business="{{ business_id }}"{% endblock %}
+{% block body %}
+<a class="skip-link" href="#main">К содержимому</a>
+<div class="topbar">
+  <a class="brand" href="/cabinet"><span class="brand-pole" aria-hidden="true"></span>LeadPilot</a>
+  <button class="btn btn--small" type="button" data-nav-toggle aria-controls="rail" aria-expanded="false">Меню</button>
+</div>
+<div class="app">
+  <aside class="rail" id="rail" aria-label="Разделы кабинета">
+    <a class="brand" href="/cabinet"><span class="brand-pole" aria-hidden="true"></span>LeadPilot</a>
+
+    <div class="switcher">
+      {% if memberships|length > 1 %}
+        <label for="company-switch">Компания</label>
+        <select class="select" id="company-switch" data-company-switch>
+          {% for m in memberships %}
+            <option value="{{ m.id }}"{% if m.id == business_id %} selected{% endif %}>{{ m.name }}</option>
+          {% endfor %}
+        </select>
+      {% else %}
+        <span class="cell-title">{{ business.name }}</span>
+        <span class="cell-sub">{{ label('business_status', business.status) }}</span>
+      {% endif %}
+    </div>
+
+    <nav class="nav" aria-label="Основное меню">
+      {% for group in nav %}
+        <div class="nav-group">
+          <div class="nav-title">{{ group.title }}</div>
+          {% for item in group['items'] %}
+            <a class="nav-link" href="/cabinet/{{ business_id }}{{ item.path }}"{% if item.key == active %} aria-current="page"{% endif %}>
+              <span>{{ item.label }}</span>
+              {% if item.key == 'messages' and attention_count %}<span class="nav-count" title="Требуют внимания">{{ attention_count }}</span>{% endif %}
+            </a>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </nav>
+
+    <div class="rail-foot">
+      <span class="who">{{ user.email }}</span>
+      <span>{{ label('role', role) }}</span>
+      <button class="btn btn--small" type="button" data-logout>Выйти</button>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    {% if business.status.value == 'SUSPENDED' %}
+      <div class="notice notice--error" role="alert">Компания приостановлена: AI не отвечает клиентам, отправка сообщений недоступна. Напишите в поддержку LeadPilot.</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% block scripts %}{% endblock %}
+{% endblock %}

@@ -1,1 +1,92 @@
-<!-- Этап 5 (раздел 13 ТЗ): страница «dashboard» кабинета на Jinja2. Заполняется на этапе 5. -->
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Обзор</h1>
+    <p>{{ business.name }}: что происходит с обращениями клиентов прямо сейчас.</p>
+  </div>
+  <div class="actions"><a class="btn" href="/cabinet/{{ business_id }}/messages">Все сообщения</a></div>
+</header>
+
+{% if setup.show %}
+  <section class="sheet">
+    <div class="sheet-head"><h2>Осталось настроить, чтобы ассистент заработал</h2></div>
+    <div class="sheet-body">
+      <ol class="steps">
+        <li data-done="{{ 'true' if setup.services else 'false' }}">
+          <span class="step-text">Добавьте услуги и цены<small>Ассистент называет цены только из вашего прайса.</small></span>
+          <a class="btn btn--small" href="/cabinet/{{ business_id }}/services">К услугам</a>
+        </li>
+        <li data-done="{{ 'true' if setup.telegram else 'false' }}">
+          <span class="step-text">Подключите Telegram-бота<small>Через него клиенты будут писать вам.</small></span>
+          <a class="btn btn--small" href="/cabinet/{{ business_id }}/settings">К настройкам</a>
+        </li>
+        <li data-done="false">
+          <span class="step-text">Проверьте ответы ассистента<small>Задайте вопрос так, как его задал бы клиент.</small></span>
+          <a class="btn btn--small" href="/cabinet/{{ business_id }}/ai">Проверить</a>
+        </li>
+      </ol>
+    </div>
+  </section>
+{% endif %}
+
+<section class="board" aria-label="Показатели">
+  <div class="board-item">
+    <div class="board-value">{{ summary.conversations_24h }}</div>
+    <div class="board-label">Новых обращений за сутки</div>
+    <div class="board-note">За 7 суток: {{ summary.conversations_7d }}</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ summary.ai_answered_7d }}</div>
+    <div class="board-label">Ответов дал ассистент за неделю</div>
+    <div class="board-note">{% if summary.ai_share_percent_7d is not none %}Сам справился в {{ summary.ai_share_percent_7d }}% случаев{% else %}Пока нет данных{% endif %}</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ summary.hot_leads_open }}</div>
+    <div class="board-label">Горячих лидов в работе</div>
+    <div class="board-note"><a href="/cabinet/{{ business_id }}/leads?priority=HOT">Открыть список</a></div>
+  </div>
+  <div class="board-item{% if summary.needs_attention %} board-item--alert{% endif %}">
+    <div class="board-value">{{ summary.needs_attention }}</div>
+    <div class="board-label">Ждут вашего внимания</div>
+    <div class="board-note"><a href="/cabinet/{{ business_id }}/messages?status=NEEDS_ATTENTION">Открыть очередь</a></div>
+  </div>
+</section>
+
+<div class="grid grid--main">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Очередь: нужен человек</h2></div>
+    {% if queue %}
+      <ul class="rows">
+        {% for item in queue %}
+          {{ m.conversation_row(item, '/cabinet/' ~ business_id ~ '/messages?c=' ~ item[0].id) }}
+        {% endfor %}
+      </ul>
+    {% else %}
+      {% call m.empty('Очередь пуста', 'Все обращения обработаны. Когда ассистенту понадобится помощь, диалог появится здесь.') %}{% endcall %}
+    {% endif %}
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head"><h2>Новые горячие лиды</h2></div>
+    {% if hot_leads %}
+      <ul class="rows">
+        {% for lead, conversation, customer in hot_leads %}
+          <li>
+            <a class="row-link" href="/cabinet/{{ business_id }}/messages?c={{ conversation.id }}">
+              {{ m.pole(lead.priority) }}
+              <span class="row-main">
+                <span class="row-top"><span class="row-name">{{ m.customer_name(customer) }}</span><span class="row-time">{{ m.time(lead.created_at) }}</span></span>
+                <span class="row-text">{{ label('intent', lead.intent) }}{% if lead.reason %}: {{ lead.reason|reason }}{% endif %}</span>
+              </span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      {% call m.empty('Новых горячих лидов нет', 'Сюда попадают клиенты, готовые записаться или недовольные сервисом.') %}{% endcall %}
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

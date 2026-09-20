@@ -878,3 +878,16 @@ def get_customer_history(
         .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
     ).all()
     return _attach_last_message_and_lead(db, ctx, [(c, customer) for c in conversations])
+
+
+def inbox_state(db: Session, ctx: BusinessContext) -> dict:
+    """Лёгкий снимок для тихого опроса кабинета: id последнего сообщения и число
+    диалогов, требующих внимания. Страница по нему решает, показать «Есть новые»."""
+    last_id = db.scalar(select(func.max(Message.id)).where(Message.business_id == ctx.business_id))
+    attention = db.scalar(
+        select(func.count(Conversation.id)).where(
+            Conversation.business_id == ctx.business_id,
+            Conversation.status == ConversationStatus.NEEDS_ATTENTION,
+        )
+    )
+    return {"last_message_id": int(last_id or 0), "attention": int(attention or 0)}

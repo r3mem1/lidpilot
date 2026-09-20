@@ -259,4 +259,6 @@ def build_ai_context(db: Session, business: Business) -> BusinessKnowledge:
         ),
         # Интеграции с календарём в MVP нет (раздел 19) — AI не обещает время.
         has_schedule_integration=False,
+        tone=business.ai_tone.value,
+        auto_reply=business.ai_auto_reply,
     )

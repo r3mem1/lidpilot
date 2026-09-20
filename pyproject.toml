@@ -20,7 +20,7 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Path", "fastapi.Query", "f
 
 [tool.pyright]
 pythonVersion = "3.11"
-include = ["ai", "integrations", "routes", "services", "main.py", "config.py", "database.py", "models.py", "schemas.py"]
+include = ["ai", "integrations", "routes", "services", "main.py", "config.py", "database.py", "models.py", "schemas.py", "templating.py", "cabinet_labels.py"]
 typeCheckingMode = "basic"
 
 [tool.pytest.ini_options]

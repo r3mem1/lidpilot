@@ -1,0 +1,27 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ m.customer_name(customer) }}</h1>
+    <p>
+      {% if customer.username %}@{{ customer.username }}. {% endif %}Клиент с <span>{{ m.time(customer.created_at) }}</span>.
+      {% if customer.channel_blocked %}<span class="tag tag--attention">Заблокировал бота</span>{% endif %}
+    </p>
+  </div>
+  <div class="actions"><a class="btn" href="/cabinet/{{ business_id }}/customers">Все клиенты</a></div>
+</header>
+
+<section class="sheet">
+  <div class="sheet-head"><h2>История обращений</h2></div>
+  {% if history %}
+    <ul class="rows">
+      {% for item in history %}
+        {{ m.conversation_row(item, '/cabinet/' ~ business_id ~ '/messages?c=' ~ item[0].id) }}
+      {% endfor %}
+    </ul>
+  {% else %}
+    {% call m.empty('Обращений пока нет', 'Когда клиент напишет снова, диалог появится здесь.') %}{% endcall %}
+  {% endif %}
+</section>
+{% endblock %}

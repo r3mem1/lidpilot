@@ -11,3 +11,4 @@ pyright>=1.1.380
 bandit>=1.7
 pip-audit>=2.7
 tzdata; sys_platform == "win32"   # Alembic (timezone=UTC в alembic.ini) на Windows
+playwright>=1.45   # scripts/e2e_browser.py (необязательно; нужен установленный Edge или Chrome)

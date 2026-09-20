@@ -13,7 +13,7 @@ from __future__ import annotations
 from ai.context import BusinessKnowledge, HistoryRole, HistoryTurn
 
 CLASSIFIER_PROMPT_VERSION = "classifier-v2"
-RESPONDER_PROMPT_VERSION = "responder-v2"
+RESPONDER_PROMPT_VERSION = "responder-v3"
 
 # Ограничения из раздела 12.3 + 6.6 ТЗ. Дублируются в валидаторе: промпт —
 # это просьба, валидатор — проверка (раздел 6.6: структурированная проверка).
@@ -35,6 +35,19 @@ def _fence_customer_text(text: str) -> str:
     а закрывающий тег внутри текста убираем, чтобы клиент не мог «выйти» из блока."""
     cleaned = text.strip().replace("</сообщение_клиента>", "").replace("<сообщение_клиента>", "")
     return "<сообщение_клиента>\n" + cleaned + "\n</сообщение_клиента>"
+
+
+# Стиль ответа задаёт владелец (раздел 13). Стиль меняет только манеру речи и не
+# ослабляет ограничения выше: цены, время и скидки по-прежнему только из данных.
+_TONE_INSTRUCTIONS = {
+    "FRIENDLY": "Тон: тёплый и дружелюбный, живой разговорный язык, без канцелярита.",
+    "FORMAL": "Тон: официально-вежливый, обращение на «вы», без сленга и смайликов.",
+    "BRIEF": "Тон: предельно краткий — одно-два предложения строго по существу.",
+}
+
+
+def _tone_instruction(tone: str) -> str:
+    return _TONE_INSTRUCTIONS.get(tone, _TONE_INSTRUCTIONS["FRIENDLY"])
 
 
 def _render_history(history: list[HistoryTurn], limit: int) -> str:
@@ -118,6 +131,7 @@ def build_responder_messages(
 {_AI_LIMITS}
 
 Длина ответа — не более {max_chars} символов.
+{_tone_instruction(knowledge.tone)}
 
 Отвечай ТОЛЬКО одним JSON-объектом без markdown:
 {{"reply": "текст ответа клиенту",

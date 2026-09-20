@@ -1,1 +1,33 @@
-<!-- Этап 5 (раздел 13 ТЗ): страница «login» кабинета на Jinja2. Заполняется на этапе 5. -->
+{% extends "base.html" %}
+{% block body %}
+<div class="auth">
+  <section class="auth-art" aria-hidden="false">
+    <a class="brand" href="/login"><span class="brand-pole" aria-hidden="true"></span>LeadPilot</a>
+    <div>
+      <h1>Каждое сообщение клиента получает ответ</h1>
+      <p>LeadPilot отвечает на типовые вопросы сам, а всё сложное передаёт вам вместе с историей диалога.</p>
+    </div>
+  </section>
+  <main class="auth-main">
+    <div class="auth-card">
+      <h2>Вход в кабинет</h2>
+      <p class="lead">Введите почту и пароль, с которыми вы регистрировались.</p>
+      <form data-api-form data-method="POST" data-url="/auth/login" data-success="redirect" data-redirect="{{ next }}" novalidate>
+        <div class="field">
+          <label for="email">Электронная почта</label>
+          <input class="input" id="email" name="email" type="email" autocomplete="username" required value="{{ email }}" autofocus>
+        </div>
+        <div class="field">
+          <label for="password">Пароль</label>
+          <input class="input" id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Войти</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      </form>
+      <p class="alt">Впервые здесь? <a href="/register{% if next != '/cabinet' %}?next={{ next|urlencode }}{% endif %}">Создайте аккаунт</a></p>
+    </div>
+  </main>
+</div>
+{% endblock %}

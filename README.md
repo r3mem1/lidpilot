@@ -1,4 +1,4 @@
-# LeadPilot — этапы 1–3
+# LeadPilot — этапы 1–5
 
 Реализовано строго по ТЗ v1.0, раздел 20.
 
@@ -23,7 +23,11 @@ OpenAI-совместимый сервис — `AI_PROVIDER=openai_compatible` +
 HOT/WARM/COLD, причина, статус, ответственный), ручной ответ менеджера клиенту в
 Telegram, отметка «решено», клиенты и история их обращений.
 
-Кабинет (этап 5) и панель ADMIN (этап 6) не реализованы — в проекте присутствуют только файлы структуры Приложения A
+**Этап 5 «Кабинет бизнеса»:** веб-интерфейс на Jinja2 (без SPA) для владельца и менеджера — обзор,
+сообщения с ручным ответом, лиды, клиенты, услуги, настройки AI, сотрудники и приглашения,
+интеграции, аналитика.
+
+Панель ADMIN (этап 6) не реализована — в проекте присутствуют только файлы структуры Приложения A
 с объявленными контрактами.
 
 ## Запуск
@@ -54,6 +58,7 @@ python smoke_test.py       # 80 проверок этапа 1: роли, изо�
 python smoke_test_ai.py    # 141 проверка этапа 2: классификация, валидатор, эскалации, логи
 python smoke_test_stage3.py  # 139 проверок этапа 3: webhook, идемпотентность, сбои, изоляция
 python smoke_test_stage4.py  # 121 проверка этапа 4: лиды, ручной ответ, «решено», клиенты
+python smoke_test_stage5.py  # 181 проверка этапа 5: страницы и роли, XSS/CSRF/CSP, команда, аналитика
 ```
 
 Пошаговая инструкция ручной проверки (Swagger, OpenRouter, настоящий Telegram) —
@@ -117,6 +122,54 @@ curl -X POST http://127.0.0.1:8000/businesses/1/integrations/telegram \
 | POST   | `/businesses/{id}/integrations/telegram`     | OWNER, ADMIN (вне §11)               |
 | DELETE | `/businesses/{id}/integrations/telegram`     | OWNER, ADMIN (вне §11)               |
 
+## Кабинет бизнеса (этап 5)
+
+Запуск: `uvicorn main:app --reload`, затем откройте <http://127.0.0.1:8000> — откроется вход.
+Чтобы посмотреть кабинет без Telegram и реальных клиентов, создайте демо-данные:
+
+```bash
+python scripts/seed_demo.py     # владелец demo@example.com и менеджер manager@example.com, пароль Demo-Pass-123
+```
+
+| Раздел | Адрес | Кто видит |
+|---|---|---|
+| Обзор: показатели, очередь «нужен человек», новые горячие лиды | `/cabinet/{id}` | владелец, менеджер |
+| Сообщения: список диалогов с фильтрами и переписка, ручной ответ, «решено» | `/cabinet/{id}/messages` | владелец, менеджер |
+| Лиды: фильтры по приоритету, статусу, ответственному, периоду | `/cabinet/{id}/leads` | владелец, менеджер |
+| Клиенты и история обращений | `/cabinet/{id}/customers` | владелец, менеджер |
+| Услуги (менеджер — только просмотр) | `/cabinet/{id}/services` | владелец, менеджер |
+| AI: правила, стиль ответов, автоответы, проверка ответа | `/cabinet/{id}/ai` | владелец |
+| Сотрудники: роли, удаление, приглашения по ссылке | `/cabinet/{id}/team` | владелец |
+| Настройки компании и подключение Telegram | `/cabinet/{id}/settings` | владелец |
+| Аналитика за период | `/cabinet/{id}/analytics` | владелец |
+
+Чужая компания — 404, недостаточная роль — страница «Недостаточно прав». Приглашение сотрудника —
+одноразовая ссылка (письма система не шлёт): владелец копирует её и передаёт сам; принять её может
+только человек с той же почтой.
+
+Настройки AI (раздел 13): **стиль ответов** (дружелюбный, официальный, краткий) меняет манеру речи, но не
+ослабляет запреты на выдуманные цены и обещания записи; **автоответы** можно выключить — тогда ассистент
+только классифицирует обращения, а отвечает менеджер.
+
+Безопасность интерфейса: экранирование всего клиентского текста, строгий CSP (только свои скрипты, стили
+и шрифты, без inline), защита от CSRF проверкой источника запроса для cookie-сессий, заголовки
+`X-Frame-Options`, `X-Content-Type-Options`, `no-store`. Изменения данных кабинет делает через тот же JSON API,
+поэтому роли, изоляция компаний и аудит проверяются в одном месте.
+
+Проверка в браузере (нужны `pip install playwright` и Edge или Chrome):
+`python scripts/e2e_browser.py` — проходит основные сценарии и сохраняет скриншоты в `e2e-shots/`.
+
+Новые endpoints (вне минимального списка §11, нужны для раздела 13):
+
+| Метод | Путь | Доступ |
+|---|---|---|
+| PATCH / DELETE | `/businesses/{id}/members/{user_id}` | OWNER: роль / удаление (последнего владельца нельзя) |
+| GET / POST | `/businesses/{id}/invitations` | OWNER |
+| DELETE | `/businesses/{id}/invitations/{invitation_id}` | OWNER |
+| POST | `/invitations/accept` | любой вошедший (нужна почта из приглашения) |
+| GET | `/businesses/{id}/analytics` | OWNER; `date_from`, `date_to` |
+| GET | `/businesses/{id}/inbox/state` | OWNER, MANAGER |
+
 ## CRM-ядро (этап 4)
 
 **Лиды.** Каждое обращение клиента (кроме спама) становится лидом: один лид на диалог.
@@ -174,5 +227,7 @@ curl -X POST http://127.0.0.1:8000/businesses/1/integrations/telegram \
 `services/rate_limit_service.py`, `services/ai_service.py` (AI Service
 раздела 8), `ai/context.py`, `ai/prompts.py`, `ai/llm_client.py`,
 `ai/pipeline.py`, `services/integration_service.py`, `services/secret_store.py`,
-`routes/integrations.py`, `services/lead_service.py`, `alembic.ini` + `migrations/`, `.env.example`, `.gitignore`,
-`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`, `smoke_test_stage4.py`.
+`routes/integrations.py`, `routes/cabinet.py`, `routes/team.py`, `services/lead_service.py`,
+`services/team_service.py`, `services/analytics_service.py`, `templating.py`, `cabinet_labels.py`,
+`templates/`, `static/`, `scripts/`, `alembic.ini` + `migrations/`, `.env.example`, `.gitignore`,
+`README.md`, `smoke_test.py`, `smoke_test_ai.py`, `smoke_test_stage3.py`, `smoke_test_stage4.py`, `smoke_test_stage5.py`.

@@ -45,6 +45,7 @@ class EscalationReason(str, enum.Enum):
     COMPLAINT = "COMPLAINT"  # жалоба клиента
     AMBIGUOUS_REQUEST = "AMBIGUOUS_REQUEST"  # неоднозначный запрос
     MISSING_DATA = "MISSING_DATA"  # нет необходимых данных
+    AUTO_REPLY_DISABLED = "AUTO_REPLY_DISABLED"  # владелец отключил автоответы
     ACTION_NOT_ALLOWED = "ACTION_NOT_ALLOWED"  # действие вне прав AI
     HOT_LEAD_CONFIRMATION = "HOT_LEAD_CONFIRMATION"  # горячий лид, нужно подтверждение
     EXTERNAL_API_ERROR = "EXTERNAL_API_ERROR"  # ошибка внешнего API
@@ -134,6 +135,7 @@ _SAFE_REPLIES: dict[EscalationReason, str | None] = {
         "С этим вопросом я помочь не могу — передаю его сотруднику, он ответит вам."
     ),
     EscalationReason.MISSING_DATA: _HOLDING_DEFAULT,
+    EscalationReason.AUTO_REPLY_DISABLED: _HOLDING_DEFAULT,
     EscalationReason.AMBIGUOUS_REQUEST: _HOLDING_DEFAULT,
     EscalationReason.EXTERNAL_API_ERROR: _HOLDING_DEFAULT,
     EscalationReason.VALIDATION_FAILED: _HOLDING_DEFAULT,
@@ -221,6 +223,18 @@ class AIPipeline:
                 classification=classification,
                 escalation_reason=reason,
                 escalation_detail=classification.reason,
+                latency_ms=elapsed(),
+            )
+
+        # Владелец отключил автоответы (раздел 13: разрешённые действия): AI только
+        # классифицировал обращение, отвечает менеджер.
+        if not knowledge.auto_reply:
+            return PipelineResult(
+                decision=Decision.ESCALATE,
+                normalized_text=normalized,
+                classification=classification,
+                escalation_reason=EscalationReason.AUTO_REPLY_DISABLED,
+                escalation_detail="Автоответы отключены в настройках компании",
                 latency_ms=elapsed(),
             )
 

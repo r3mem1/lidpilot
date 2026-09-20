@@ -1,0 +1,108 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Аналитика</h1>
+    <p>Базовые показатели за выбранный период. Даты считаются по UTC.</p>
+  </div>
+</header>
+
+<section class="sheet">
+  <form class="sheet-body" method="get" action="/cabinet/{{ business_id }}/analytics">
+    <div class="period">
+      <div class="tabs" aria-label="Готовые периоды">
+        {% for d in [7, 30, 90] %}<a class="tab" href="?days={{ d }}" aria-current="{{ 'true' if days == d else 'false' }}">{{ d }} дн.</a>{% endfor %}
+      </div>
+      <div class="field"><label for="a-from">С</label><input class="input input--small" id="a-from" name="date_from" type="date" value="{{ date_from }}"></div>
+      <div class="field"><label for="a-to">По</label><input class="input input--small" id="a-to" name="date_to" type="date" value="{{ date_to }}"></div>
+      <button class="btn btn--small btn--primary" type="submit">Показать</button>
+    </div>
+  </form>
+</section>
+
+<section class="board" aria-label="Итоги периода">
+  <div class="board-item">
+    <div class="board-value">{{ summary.conversations_new }}</div>
+    <div class="board-label">Новых обращений</div>
+    <div class="board-note">Активных клиентов: {{ summary.customers_active }}</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ summary.messages_incoming }}</div>
+    <div class="board-label">Сообщений от клиентов</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{% if summary.ai_share_percent is not none %}{{ summary.ai_share_percent }}%{% else %}—{% endif %}</div>
+    <div class="board-label">Ассистент справился сам</div>
+    <div class="board-note">Ответил: {{ summary.ai_answered }}, передал вам: {{ summary.ai_escalated }}</div>
+  </div>
+  <div class="board-item">
+    <div class="board-value">{{ summary.manager_replies }}</div>
+    <div class="board-label">Ответов менеджеров</div>
+  </div>
+</section>
+
+<section class="sheet">
+  <div class="sheet-head"><h2>Сообщения по дням</h2></div>
+  {% set n = summary.daily|length %}
+  {% set step = 720 / (n if n else 1) %}
+  {% set bar = step * 0.62 %}
+  <div class="chart">
+    <svg viewBox="0 0 720 190" role="img" aria-label="Сообщения по дням: от клиентов и ответы ассистента">
+      <line class="axis" x1="0" y1="160" x2="720" y2="160"/>
+      {% for d in summary.daily %}
+        {% set x = loop.index0 * step + (step - bar) / 2 %}
+        {% set h_in = (d.incoming * 140 / daily_max) if daily_max else 0 %}
+        {% set h_ai = (d.ai * 140 / daily_max) if daily_max else 0 %}
+        <rect class="bar-ai" x="{{ '%.1f'|format(x + bar * 0.5) }}" y="{{ '%.1f'|format(160 - h_ai) }}" width="{{ '%.1f'|format(bar * 0.46) }}" height="{{ '%.1f'|format(h_ai) }}"><title>{{ d.date }}: ответов ассистента {{ d.ai }}</title></rect>
+        <rect class="bar-in" x="{{ '%.1f'|format(x) }}" y="{{ '%.1f'|format(160 - h_in) }}" width="{{ '%.1f'|format(bar * 0.46) }}" height="{{ '%.1f'|format(h_in) }}"><title>{{ d.date }}: сообщений от клиентов {{ d.incoming }}</title></rect>
+      {% endfor %}
+      {% if n %}
+        <text x="0" y="180">{{ summary.daily[0].date }}</text>
+        <text x="720" y="180" text-anchor="end">{{ summary.daily[-1].date }}</text>
+      {% endif %}
+      <text x="0" y="12">{{ daily_max }}</text>
+    </svg>
+  </div>
+  <div class="legend"><span><i class="bar-in-swatch"></i>От клиентов</span><span><i class="bar-ai-swatch"></i>Ответы ассистента</span></div>
+</section>
+
+<div class="grid grid--2">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Лиды по приоритету</h2><span class="muted">Всего: {{ summary.leads_total }}</span></div>
+    <div class="sheet-body">
+      {% for key, kind in [('HOT', 'hot'), ('WARM', 'warm'), ('COLD', 'cold')] %}
+        {{ m.meter(label('priority', key), summary.leads_by_priority[key], summary.leads_total, kind) }}
+      {% endfor %}
+    </div>
+  </section>
+  <section class="sheet">
+    <div class="sheet-head"><h2>Лиды по статусу</h2></div>
+    <div class="sheet-body">
+      {% for key in ['NEW', 'IN_PROGRESS', 'RESOLVED', 'LOST'] %}
+        {{ m.meter(label('lead_status', key), summary.leads_by_status[key], summary.leads_total) }}
+      {% endfor %}
+    </div>
+  </section>
+  <section class="sheet">
+    <div class="sheet-head"><h2>О чём спрашивают</h2></div>
+    <div class="sheet-body">
+      {% if summary.intents %}
+        {% for key, value in summary.intents|dictsort(by='value', reverse=true) %}
+          {{ m.meter(label('intent', key), value, summary.messages_incoming) }}
+        {% endfor %}
+      {% else %}<p class="muted">За этот период сообщений не было.</p>{% endif %}
+    </div>
+  </section>
+  <section class="sheet">
+    <div class="sheet-head"><h2>Надёжность</h2></div>
+    <div class="sheet-body">
+      <dl class="stats">
+        <div><dt>Среднее время ответа модели</dt><dd>{% if summary.ai_avg_latency_ms is not none %}{{ summary.ai_avg_latency_ms }}&nbsp;мс{% else %}—{% endif %}</dd></div>
+        <div><dt>Сбоев AI-сервиса</dt><dd>{{ summary.ai_errors }}</dd></div>
+        <div><dt>Сообщений не доставлено</dt><dd>{{ summary.delivery_failed }}</dd></div>
+      </dl>
+    </div>
+  </section>
+</div>
+{% endblock %}

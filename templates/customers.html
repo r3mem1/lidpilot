@@ -1,0 +1,46 @@
+{% extends "cabinet_base.html" %}
+{% import "_macros.html" as m %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Клиенты</h1>
+    <p>Все, кто писал вашему боту, и история их обращений.</p>
+  </div>
+  <form class="actions" method="get" action="/cabinet/{{ business_id }}/customers" role="search">
+    <label class="visually-hidden" for="q">Поиск по имени или нику</label>
+    <input class="input input--small" id="q" name="q" type="search" value="{{ q }}" placeholder="Имя или @ник" maxlength="100">
+    <button class="btn btn--small" type="submit">Найти</button>
+  </form>
+</header>
+
+<section class="sheet">
+  {% if rows %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th class="grow">Клиент</th><th class="num">Обращений</th><th>Последняя активность</th><th>Канал</th></tr></thead>
+        <tbody>
+          {% for customer, count, last in rows %}
+            <tr>
+              <td>
+                <a class="cell-title" href="/cabinet/{{ business_id }}/customers/{{ customer.id }}">{{ m.customer_name(customer) }}</a>
+                {% if customer.username and customer.name %}<div class="cell-sub">@{{ customer.username }}</div>{% endif %}
+              </td>
+              <td class="num">{{ count }}</td>
+              <td class="muted">{{ m.time(last) }}</td>
+              <td>
+                Telegram
+                {% if customer.channel_blocked %}<span class="tag tag--attention">Заблокировал бота</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if has_more %}
+      <div class="sheet-body"><a class="btn btn--small" href="?offset={{ next_offset }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}">Показать ещё</a></div>
+    {% endif %}
+  {% else %}
+    {% call m.empty('Клиентов не найдено', 'Клиент появляется в списке после первого сообщения вашему боту.') %}{% endcall %}
+  {% endif %}
+</section>
+{% endblock %}

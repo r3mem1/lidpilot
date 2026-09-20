@@ -31,7 +31,8 @@ templates/ static/   кабинет (Jinja2)
 5. **Аудит и логи (§16–17):** каждое значимое событие → `system_logs` через `audit_service`; по логам должно быть видно,
    что случилось с конкретным сообщением и почему отправлен именно этот ответ.
 6. После ручного ответа менеджера AI молчит в диалоге до «решено» (`conversations.handled_by_manager`); приоритет лида внутри открытого диалога не понижается.
-7. Роль проверяется на **каждом** защищённом endpoint; `/admin/*` — только ADMIN (`require_platform_admin`); ADMIN не создаётся публичной регистрацией.
+7. Кабинет (`routes/cabinet.py`, `templates/`, `static/`): весь чужой текст только через автоэкранирование Jinja (без `|safe`), в JS — `textContent`; без inline-скриптов/стилей (строгий CSP в `main.py`); данные кабинет меняет только через JSON API; cookie-сессия защищена проверкой Origin (`enforce_same_origin`).
+8. Роль проверяется на **каждом** защищённом endpoint; `/admin/*` — только ADMIN (`require_platform_admin`); ADMIN не создаётся публичной регистрацией.
 
 ## Статус этапов (§20)
 | Этап | Состояние |
@@ -40,7 +41,7 @@ templates/ static/   кабинет (Jinja2)
 | 2 AI pipeline | ✅ реализован, `smoke_test_ai.py` |
 | 3 Telegram (webhook, отправка) | ✅ реализован, `smoke_test_stage3.py` |
 | 4 CRM-ядро (лиды, статусы, ручной ответ, фильтры) | ✅ реализован, `smoke_test_stage4.py` |
-| 5 Кабинет бизнеса (dashboard, сообщения, услуги, настройки, аналитика) | ⏳ шаблоны-заготовки |
+| 5 Кабинет бизнеса (dashboard, сообщения, лиды, клиенты, услуги, AI, команда, настройки, аналитика) | ✅ реализован, `smoke_test_stage5.py`, `scripts/e2e_browser.py` |
 | 6 Admin-панель | ⏳ `routes/admin.py` пуст |
 | 7–9 Пилот, SaaS-автоматизация, масштабирование | — |
 
@@ -56,6 +57,8 @@ python smoke_test.py                   # 80 проверок этапа 1
 python smoke_test_ai.py                # 141 проверка этапа 2
 python smoke_test_stage3.py            # 139 проверок этапа 3
 python smoke_test_stage4.py            # 121 проверка этапа 4
+python smoke_test_stage5.py            # 181 проверка этапа 5
+python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
 bandit -r . -x ./migrations,./smoke_test.py,./smoke_test_ai.py   # SAST

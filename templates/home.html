@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="center-page">
+  <section class="sheet center-card">
+    {% if first %}
+      <h1>Создайте вашу компанию</h1>
+      <p class="muted">Эти данные ассистент использует в ответах клиентам. Остальное можно заполнить позже в настройках.</p>
+      <form data-api-form data-method="POST" data-url="/businesses" data-success="redirect" data-redirect="/cabinet/{id}" novalidate>
+        <div class="field">
+          <label for="name">Название</label>
+          <input class="input" id="name" name="name" required maxlength="255" autofocus placeholder="Например, барбершоп «Бритва»">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="category">Чем занимаетесь</label>
+            <input class="input" id="category" name="category" maxlength="120" data-empty="null" placeholder="Барбершоп">
+          </div>
+          <div class="field">
+            <label for="phone">Телефон</label>
+            <input class="input" id="phone" name="phone" maxlength="50" data-empty="null" placeholder="+7 900 000-00-00" inputmode="tel">
+          </div>
+        </div>
+        <div class="field">
+          <label for="address">Адрес</label>
+          <input class="input" id="address" name="address" maxlength="500" data-empty="null">
+        </div>
+        <div class="field">
+          <label for="working_hours">График работы</label>
+          <input class="input" id="working_hours" name="working_hours" maxlength="500" data-empty="null" placeholder="пн–сб 10:00–21:00">
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Создать компанию</button>
+          <button class="btn btn--link" type="button" data-logout>Выйти</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      </form>
+    {% else %}
+      <h1>Выберите компанию</h1>
+      <div class="company-list">
+        {% for m in memberships %}
+          <a href="/cabinet/{{ m.id }}"><span>{{ m.name }}</span><span class="muted">{{ label('role', m.role) }}</span></a>
+        {% endfor %}
+      </div>
+      <button class="btn btn--small" type="button" data-logout>Выйти ({{ user.email }})</button>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

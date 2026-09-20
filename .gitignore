@@ -15,3 +15,5 @@ venv/
 .claude/settings.local.json
 .ruff_cache/
 .pytest_cache/
+
+e2e-shots/

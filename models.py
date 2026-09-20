@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    true,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
@@ -71,6 +72,14 @@ class MemberRole(str, enum.Enum):
 
     OWNER = "OWNER"
     MANAGER = "MANAGER"
+
+
+class AiTone(str, enum.Enum):
+    """Стиль ответов AI (раздел 13: «AI — правила, стиль ответа»)."""
+
+    FRIENDLY = "FRIENDLY"  # тёплый, по-человечески
+    FORMAL = "FORMAL"  # вежливо, на «вы», без сленга
+    BRIEF = "BRIEF"  # максимально коротко и по делу
 
 
 class BusinessStatus(str, enum.Enum):
@@ -147,6 +156,14 @@ class Business(Base):
     escalation_contact: Mapped[str | None] = mapped_column(String(255))
     # Правила поведения AI (раздел 6.2). Используются AI-модулем на этапе 2.
     ai_rules: Mapped[str | None] = mapped_column(Text)
+    # Стиль и разрешённые действия AI (раздел 13). ai_auto_reply=False: AI только
+    # классифицирует, а отвечает клиентам менеджер (разделы 6.7, 19).
+    ai_tone: Mapped[AiTone] = enum_column(
+        AiTone, nullable=False, default=AiTone.FRIENDLY, server_default=AiTone.FRIENDLY.value
+    )
+    ai_auto_reply: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
     status: Mapped[BusinessStatus] = enum_column(
         BusinessStatus, nullable=False, default=BusinessStatus.TRIAL
     )
@@ -557,3 +574,33 @@ class Lead(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
+
+
+# --------------------------------------------------------------------------- #
+# Этап 5: приглашения сотрудников (раздел 13: «Сотрудники — приглашение менеджеров»)
+# --------------------------------------------------------------------------- #
+class Invitation(Base):
+    """Приглашение в компанию по одноразовой ссылке.
+
+    Писем система не шлёт (почтовой инфраструктуры в MVP нет): владелец получает
+    ссылку один раз и передаёт её сам. Токен хранится только как SHA-256, принять
+    приглашение может пользователь с тем же email (раздел 16).
+    """
+
+    __tablename__ = "invitations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    role: Mapped[MemberRole] = enum_column(MemberRole, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

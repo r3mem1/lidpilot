@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from fastapi import Depends, HTTPException, Path, Request, status
 from sqlalchemy import select
@@ -65,9 +66,36 @@ def _extract_token(request: Request) -> str | None:
     return request.cookies.get(settings.auth_cookie_name)
 
 
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+
+
+def enforce_same_origin(request: Request) -> None:
+    """Защита от CSRF для запросов, авторизованных cookie (раздел 16).
+
+    Браузер всегда указывает Origin (или Referer) в запросах, меняющих данные. Если
+    источник — не наш сайт, запрос отклоняется. Запросы без этих заголовков (curl,
+    серверные клиенты) не из браузера и CSRF-риска не несут. Дополнительно cookie
+    выставляется с SameSite=Lax. Bearer-клиентов проверка не касается.
+    """
+    source = request.headers.get("origin")
+    if source is None:
+        source = request.headers.get("referer")
+    if source is None:
+        return
+    allowed = {request.headers.get("host", "").lower()}
+    if settings.public_base_url:
+        allowed.add(urlparse(settings.public_base_url).netloc.lower())
+    if source == "null" or urlparse(source).netloc.lower() not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Запрос с другого сайта отклонён"
+        )
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     """Обязательная аутентификация: используется всеми защищёнными маршрутами."""
     token = _extract_token(request)
+    if token and request.method not in _SAFE_METHODS and "Authorization" not in request.headers:
+        enforce_same_origin(request)  # токен из cookie: проверяем, что запрос с нашего сайта
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

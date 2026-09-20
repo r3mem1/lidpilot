@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="auth">
+  <section class="auth-art">
+    <a class="brand" href="/login"><span class="brand-pole" aria-hidden="true"></span>LeadPilot</a>
+    <div>
+      <h1>Заявки не теряются, даже когда вы заняты</h1>
+      <p>Создайте аккаунт, добавьте услуги и подключите Telegram-бота — остальное возьмёт на себя ассистент.</p>
+    </div>
+  </section>
+  <main class="auth-main">
+    <div class="auth-card">
+      <h2>Регистрация</h2>
+      <p class="lead">Пароль запомнится браузером, поэтому придумайте длинный.</p>
+      <form data-api-form data-flow="register" data-redirect="{{ next }}" novalidate>
+        <div class="field">
+          <label for="email">Электронная почта</label>
+          <input class="input" id="email" name="email" type="email" autocomplete="username" required value="{{ email }}"{% if not email %} autofocus{% endif %}>
+        </div>
+        <div class="field">
+          <label for="password">Пароль</label>
+          <input class="input" id="password" name="password" type="password" autocomplete="new-password" minlength="8" required{% if email %} autofocus{% endif %}>
+          <span class="hint">Не короче 8 символов.</span>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Создать аккаунт</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      </form>
+      <p class="alt">Уже есть аккаунт? <a href="/login{% if next != '/cabinet' %}?next={{ next|urlencode }}{% endif %}">Войдите</a></p>
+    </div>
+  </main>
+</div>
+{% endblock %}

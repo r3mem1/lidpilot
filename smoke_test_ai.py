@@ -121,7 +121,7 @@ def response(text: str, **kwargs) -> GeneratedResponse:
     return GeneratedResponse(
         text=text,
         model="fake-model",
-        prompt_version="responder-v2",
+        prompt_version="responder-v3",
         latency_ms=5,
         source=ResponseSource.LLM,
         **kwargs,
@@ -599,7 +599,7 @@ with TestClient(app) as c:
     check("preview: причина классификации сохранена", bool(body["reason"]))
     check(
         "preview: указаны модель и версия промпта",
-        body["model"] == "fake-model" and body["prompt_version"] == "responder-v2",
+        body["model"] == "fake-model" and body["prompt_version"] == "responder-v3",
     )
 
     # Выдуманная цена через HTTP → эскалация, клиенту ответ не уходит.

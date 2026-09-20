@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="center-page">
+  <section class="sheet center-card">
+    {% if not invitation %}
+      <h1>Приглашение недействительно</h1>
+      <p class="muted">Ссылка устарела, была отозвана или уже использована. Попросите владельца компании создать новое приглашение.</p>
+      <div class="form-actions"><a class="btn" href="/cabinet">Перейти в кабинет</a></div>
+    {% else %}
+      <h1>Приглашение в «{{ business.name }}»</h1>
+      <p>Вас приглашают в команду с ролью <strong>{{ label('role', invitation.role) }}</strong>. Приглашение выдано на адрес <strong>{{ invitation.email }}</strong>.</p>
+
+      {% if not user %}
+        <p class="muted">Войдите под этим адресом или зарегистрируйтесь — после этого вы вернётесь сюда.</p>
+        <div class="form-actions">
+          <a class="btn btn--primary" href="/register?next={{ next|urlencode }}&amp;email={{ invitation.email|urlencode }}">Зарегистрироваться</a>
+          <a class="btn" href="/login?next={{ next|urlencode }}">У меня уже есть аккаунт</a>
+        </div>
+      {% elif email_matches %}
+        <div class="form-actions">
+          <button class="btn btn--primary" type="button" data-accept-invite="{{ token }}">Принять приглашение</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      {% else %}
+        <div class="notice notice--warn" role="alert">Вы вошли как {{ user.email }}, а приглашение выдано на другой адрес. Выйдите и войдите под нужным адресом.</div>
+        <div class="form-actions"><button class="btn" type="button" data-logout data-redirect="{{ next }}">Выйти</button></div>
+      {% endif %}
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

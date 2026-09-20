@@ -83,8 +83,12 @@ class Settings(BaseSettings):
     ai_max_response_chars: int = 700
     # Сколько последних сообщений диалога отдавать модели (раздел 6.6).
     ai_history_turns: int = 10
-    # Диагностический endpoint проверки AI-настроек (вне раздела 11 ТЗ).
-    ai_preview_enabled: bool = False
+    # Проверка ответа AI в разделе «AI» кабинета (раздел 13). Расходует LLM-запросы,
+    # поэтому ограничена по частоте на пользователя.
+    ai_preview_enabled: bool = True
+    ai_preview_rate_limit_per_minute: int = 20
+    # Срок действия ссылки-приглашения сотрудника (раздел 13).
+    invitation_ttl_days: int = 7
 
     # --- Первичный ADMIN (раздел 5: владелец LeadPilot) ---
     # Самостоятельная регистрация с ролью ADMIN запрещена, поэтому первый
