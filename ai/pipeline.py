@@ -95,7 +95,15 @@ class PipelineResult:
         if self.escalation_reason:
             payload["escalation_reason"] = self.escalation_reason.value
             payload["escalation_detail"] = self.escalation_detail
-            payload["safe_reply_sent"] = self.safe_reply is not None
+            # На уровне pipeline это только «для такой причины эскалации есть
+            # шаблон заглушки» — pipeline не знает про историю диалога.
+            # Уйдёт ли он клиенту на самом деле, решает message_service (антиспам:
+            # повторная заглушка в уже эскалированном диалоге подавляется) — это
+            # видно в более позднем событии MESSAGE_PROCESSED.reply_sent_to_customer.
+            # Прежнее имя safe_reply_sent вводило в заблуждение: событие AI_ERROR
+            # логируется раньше решения message_service и «true» не значило
+            # «клиент получил ответ» (было расхождение с MESSAGE_PROCESSED).
+            payload["safe_reply_available"] = self.safe_reply is not None
         if self.response:
             payload["model"] = self.response.model
             payload["prompt_version"] = self.response.prompt_version
