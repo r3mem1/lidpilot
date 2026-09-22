@@ -36,12 +36,18 @@ jobs:
           set -euo pipefail
           test -n "$PROD_DATABASE_URL" || { echo "Секрет PROD_DATABASE_URL не задан"; exit 1; }
           test -n "$BACKUP_PASSPHRASE" || { echo "Секрет BACKUP_PASSPHRASE не задан"; exit 1; }
+          # На раннере в PATH раньше стоит предустановленный pg_dump 16 — берём 17 по полному пути.
+          PGBIN=/usr/lib/postgresql/17/bin
+          "$PGBIN/pg_dump" --version
           URL="${PROD_DATABASE_URL/+psycopg2/}"
           STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
           # Только схема public (наши таблицы); служебные схемы Supabase не нужны.
-          pg_dump "$URL" --schema=public --no-owner --no-privileges --format=custom --file=leadpilot.dump
+          "$PGBIN/pg_dump" "$URL" --schema=public --no-owner --no-privileges --format=custom --file=leadpilot.dump
           # Защита от «пустого» бэкапа: в дампе должны быть наши таблицы.
-          pg_restore --list leadpilot.dump | grep -q "TABLE public users" || { echo "В дампе нет таблицы users"; exit 1; }
+          # Через файл, а не конвейер: grep -q + pipefail даёт ложное падение (SIGPIPE).
+          "$PGBIN/pg_restore" --list leadpilot.dump > dump_toc.txt
+          grep -q "TABLE public users" dump_toc.txt || { echo "В дампе нет таблицы users"; exit 1; }
+          rm -f dump_toc.txt
           gpg --batch --yes --pinentry-mode loopback --symmetric --cipher-algo AES256 \
             --passphrase "$BACKUP_PASSPHRASE" --output "leadpilot-$STAMP.dump.gpg" leadpilot.dump
           rm -f leadpilot.dump
