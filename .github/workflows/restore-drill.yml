@@ -1,0 +1,64 @@
+# Проверка восстановления бэкапа (ТЗ §18, этап 7): бэкап без проверенного восстановления
+# не считается рабочим. Ручной запуск, восстанавливает ПОСЛЕДНИЙ бэкап prod в DEV-проект
+# Supabase (--clean: dev-таблицы пересоздаются из дампа, текущие dev-данные теряются).
+# Секреты: BACKUP_PASSPHRASE (тот же, что в db-backup), DEV_DATABASE_URL (dev-проект).
+name: restore-drill
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Установить PostgreSQL client 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Скачать последний бэкап
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(gh run list --workflow=db-backup.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN_ID" || { echo "Нет ни одного успешного запуска db-backup"; exit 1; }
+          echo "Бэкап из запуска db-backup #$RUN_ID"
+          gh run download "$RUN_ID" --name leadpilot-db-backup --dir .
+
+      - name: Расшифровать и восстановить в DEV
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          test -n "$DEV_DATABASE_URL" || { echo "Секрет DEV_DATABASE_URL не задан"; exit 1; }
+          test -n "$BACKUP_PASSPHRASE" || { echo "Секрет BACKUP_PASSPHRASE не задан"; exit 1; }
+          PGBIN=/usr/lib/postgresql/17/bin
+          FILE=$(ls leadpilot-*.dump.gpg | head -1)
+          test -n "$FILE" || { echo "Файл бэкапа не найден среди скачанных артефактов"; exit 1; }
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+            --output leadpilot.dump --decrypt "$FILE"
+          URL="${DEV_DATABASE_URL/+psycopg2/}"
+          "$PGBIN/pg_restore" --clean --if-exists --no-owner --no-privileges \
+            --dbname="$URL" leadpilot.dump
+
+      - name: Проверить результат (только счётчики, без данных)
+        env:
+          DEV_DATABASE_URL: ${{ secrets.DEV_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          PGBIN=/usr/lib/postgresql/17/bin
+          URL="${DEV_DATABASE_URL/+psycopg2/}"
+          for t in users businesses services customers conversations messages leads system_logs; do
+            n=$("$PGBIN/psql" "$URL" -tAc "select count(*) from $t")
+            echo "$t: $n"
+          done
