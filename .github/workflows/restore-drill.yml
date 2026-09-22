@@ -27,6 +27,8 @@ jobs:
       - name: Скачать последний бэкап
         env:
           GH_TOKEN: ${{ github.token }}
+          # Без checkout gh не видит .git — репозиторий указываем явно.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           RUN_ID=$(gh run list --workflow=db-backup.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
