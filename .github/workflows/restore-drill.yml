@@ -31,7 +31,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          RUN_ID=$(gh run list --workflow=db-backup.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+          RUN_ID=$(gh run list --workflow=backup.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
           test -n "$RUN_ID" || { echo "Нет ни одного успешного запуска db-backup"; exit 1; }
           echo "Бэкап из запуска db-backup #$RUN_ID"
           gh run download "$RUN_ID" --name leadpilot-db-backup --dir .
