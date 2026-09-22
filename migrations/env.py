@@ -22,7 +22,9 @@ from config import settings  # noqa: E402
 from database import Base  # noqa: E402
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# «%» в configparser — интерполяция; пароль БД с URL-кодированием (%40, %23) без
+# экранирования в «%%» роняет alembic на PostgreSQL/Supabase (этап 7, §16).
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
