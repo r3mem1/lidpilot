@@ -43,7 +43,8 @@ templates/ static/   кабинет (Jinja2)
 | 4 CRM-ядро (лиды, статусы, ручной ответ, фильтры) | ✅ реализован, `smoke_test_stage4.py` |
 | 5 Кабинет бизнеса (dashboard, сообщения, лиды, клиенты, услуги, AI, команда, настройки, аналитика) | ✅ реализован, `smoke_test_stage5.py`, `scripts/e2e_browser.py` |
 | 6 Admin-панель (`/admin`: обзор, компании, статус/тариф/trial, события, метрики, MRR) | ✅ реализован, `smoke_test_stage6.py`, `scripts/e2e_admin.py` |
-| 7–9 Пилот, SaaS-автоматизация, масштабирование | — |
+| 7 Первый пилот | 🔄 в работе: прод на Render + Supabase, бэкап и restore-drill, Sentry (`monitoring.py`, `smoke_test_stage7.py`); осталось — webhook на проде, 1–3 компании, приёмка §21 на проде |
+| 8–9 SaaS-автоматизация, масштабирование | — |
 
 Не выходить за границы текущего этапа: не добавлять функции из «Не входит в MVP» (§19) — календарь, биллинг, несколько каналов, мобильное приложение.
 
@@ -59,6 +60,7 @@ python smoke_test_stage3.py            # 139 проверок этапа 3
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 181 проверка этапа 5
 python smoke_test_stage6.py            # 134 проверки этапа 6
+python smoke_test_stage7.py            # 27 проверок этапа 7 (Sentry)
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
@@ -67,7 +69,7 @@ pip-audit -r requirements.txt          # уязвимости зависимос
 ```
 Тесты — самодостаточные скрипты `smoke_test*.py` (httpx + временная SQLite). Новый этап = новый `smoke_test_stageN.py` в том же стиле.
 Токены: тесты и линтеры запускать через `python scripts/run_checks.py [stage4 …]` и `… lint [ruff|pyright|bandit|pip-audit]` —
-печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 25 LOW в `smoke_test_stage3-6.py`/`scripts/` — известный шум.
+печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 29 LOW в `smoke_test_stage3-7.py`/`scripts/` — известный шум.
 Hook `scripts/hooks/ruff_after_edit.py` проверяет правленый `.py` ruff'ом. Большие файлы (`README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`,
 `services/message_service.py`) — Grep, затем Read с `offset/limit`; широкий поиск — субагенту `Explore`; БД — MCP `sqlite` точечным SELECT.
 

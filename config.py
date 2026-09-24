@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     webhook_rate_limit_attempts: int = 30
     webhook_rate_limit_window_seconds: int = 60
 
+    # --- Мониторинг (этап 7, раздел 17) ---
+    # DSN проекта Sentry; пусто — внешний трекер ошибок выключен (monitoring.py).
+    sentry_dsn: str | None = None
+    # Доля запросов с трассировкой производительности; 0 — только ошибки.
+    sentry_traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+
     @field_validator("database_url")
     @classmethod
     def _non_empty_database_url(cls, value: str) -> str:
@@ -141,6 +147,7 @@ class Settings(BaseSettings):
         "ai_classifier_model",
         "public_base_url",
         "secrets_encryption_key",
+        "sentry_dsn",
         mode="before",
     )
     @classmethod

@@ -66,6 +66,7 @@ python smoke_test_stage3.py  # 139 проверок этапа 3: webhook, ид�
 python smoke_test_stage4.py  # 121 проверка этапа 4: лиды, ручной ответ, «решено», клиенты
 python smoke_test_stage5.py  # 181 проверка этапа 5: страницы и роли, XSS/CSRF/CSP, команда, аналитика
 python smoke_test_stage6.py  # 134 проверки этапа 6: доступ ADMIN, статусы, тарифы, MRR, журнал, XSS/CSRF
+python smoke_test_stage7.py  # 27 проверок этапа 7: Sentry без PII и секретов
 ```
 
 Пошаговая инструкция ручной проверки (Swagger, OpenRouter, настоящий Telegram) —
@@ -73,6 +74,15 @@ python smoke_test_stage6.py  # 134 проверки этапа 6: доступ A
 
 Скрипты — вспомогательные, частью приложения не являются. Сеть не нужна:
 Telegram подменяется `httpx.MockTransport`, LLM — офлайн-режимом.
+
+## Мониторинг ошибок (этап 7)
+
+Необработанные исключения и ERROR-логи уходят в Sentry, если задан `SENTRY_DSN`
+(на Render: Environment → `SENTRY_DSN`). Без него трекер выключен. Журнал
+`system_logs` и `/admin/events` остаются основным аудитом (раздел 17), Sentry нужен
+только для оповещений. В события не попадают тела запросов (текст клиентов),
+заголовки, query-строки, локальные переменные, токены ботов, Bearer-токены и email
+(`monitoring.py`). Алерт настраивается в Sentry: Alerts → «новая проблема» → email.
 
 ## AI pipeline (этап 2)
 

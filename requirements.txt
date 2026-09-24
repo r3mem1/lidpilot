@@ -30,3 +30,6 @@ jinja2>=3.1,<4.0
 
 # Шифрование токенов ботов в integrations.credentials_ref (раздел 16, этап 3)
 cryptography>=43
+
+# Внешний трекер ошибок (этап 7, раздел 17); выключен без SENTRY_DSN
+sentry-sdk>=2.20,<3

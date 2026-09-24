@@ -34,6 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from config import settings
 from database import Base, SessionLocal, engine
 from models import LogLevel, User, UserRole, UserStatus
+from monitoring import init_monitoring
 from routes import admin as admin_routes
 from routes import admin_pages as admin_pages_routes
 from routes import auth as auth_routes
@@ -56,6 +57,8 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("leadpilot")
+# Sentry — до создания приложения, чтобы интеграция FastAPI подхватила его (раздел 17).
+MONITORING_ENABLED = init_monitoring()
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -151,6 +154,7 @@ async def lifespan(app: FastAPI):
         settings.environment,
         "sqlite" if settings.is_sqlite else "postgresql",
     )
+    logger.info("Внешний трекер ошибок Sentry: %s", "включён" if MONITORING_ENABLED else "выключен")
     reprocess_task = None
     if settings.reprocess_interval_seconds > 0:
         reprocess_task = asyncio.create_task(_reprocess_loop())
