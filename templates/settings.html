@@ -84,5 +84,24 @@
       {% endif %}
     </div>
   </section>
+
+  <section class="sheet">
+    <div class="sheet-head">
+      <h2>Тариф</h2>
+      {% if subscription %}
+        {% if not subscription.active %}<span class="tag tag--attention">Срок истёк</span>
+        {% else %}<span class="tag tag--ok">{{ label('plan', subscription.plan) }}</span>{% endif %}
+      {% endif %}
+    </div>
+    <div class="sheet-body">
+      {% if subscription %}
+        <p>Текущий тариф: <strong>{{ label('plan', subscription.plan) }}</strong>,
+          {% if subscription.expires_at %}{{ 'действовал' if not subscription.active else 'действует' }} до {{ subscription.expires_at|dt }}{% else %}без ограничения срока{% endif %}.</p>
+      {% endif %}
+      <p class="muted">{% for plan, price in plans %}{{ label('plan', plan) }} — {{ price }} ₽ в месяц{{ '; ' if not loop.last else '.' }}{% endfor %}
+        Оплата по счёту: {{ billing_contact or 'напишите в поддержку LeadPilot' }}. После оплаты срок продлевается вручную.</p>
+      <p class="muted">Когда срок заканчивается, AI перестаёт отвечать клиентам, но сообщения сохраняются и вы отвечаете вручную.</p>
+    </div>
+  </section>
 </div>
 {% endblock %}

@@ -50,6 +50,17 @@
     {% if business.status.value == 'SUSPENDED' %}
       <div class="notice notice--error" role="alert">Компания приостановлена: AI не отвечает клиентам, отправка сообщений недоступна. Напишите в поддержку LeadPilot.</div>
     {% endif %}
+    {% if subscription and not subscription.active %}
+      <div class="notice notice--error" role="alert">
+        <span>{{ 'Пробный период закончился' if subscription.plan.value == 'TRIAL' else 'Срок тарифа закончился' }}: AI не отвечает клиентам. Сообщения сохраняются — отвечайте вручную в разделе «Сообщения».</span>
+        <span>Для продления: {{ subscription.billing_contact or 'напишите в поддержку LeadPilot' }}</span>
+      </div>
+    {% elif subscription and subscription.expiring_soon %}
+      <div class="notice notice--warn" role="status">
+        <span>{{ 'Пробный период' if subscription.plan.value == 'TRIAL' else 'Тариф' }} действует до {{ subscription.expires_at|dt }} (осталось {{ subscription.days_left }} дн.). После этого AI перестанет отвечать клиентам.</span>
+        <span>Для продления: {{ subscription.billing_contact or 'напишите в поддержку LeadPilot' }}</span>
+      </div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

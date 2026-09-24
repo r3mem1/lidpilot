@@ -39,7 +39,13 @@ from schemas import (
     ServiceOut,
     ServiceUpdate,
 )
-from services import ai_service, analytics_service, business_service, rate_limit_service
+from services import (
+    ai_service,
+    analytics_service,
+    business_service,
+    rate_limit_service,
+    subscription_service,
+)
 from services.access_service import (
     BusinessContext,
     get_current_user,
@@ -191,6 +197,12 @@ def ai_preview(
 ):
     if not settings.ai_preview_enabled:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    # Этап 8: по истечении срока подписки AI не работает, в том числе проверка ответов.
+    if not subscription_service.ai_allowed(db, ctx.business_id):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Срок подписки истёк: проверка ответов AI недоступна до продления",
+        )
     # Каждая проверка — платный запрос к LLM: ограничиваем частоту на пользователя.
     if settings.rate_limit_enabled and not rate_limit_service.hit(
         "ai:preview",

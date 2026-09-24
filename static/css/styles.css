@@ -454,6 +454,8 @@ td.pole-cell .pole { min-height: 34px; height: 100%; }
 }
 
 .notice + .grid, .notice + .notice, .notice + .inbox { margin-top: 18px; }
+/* Баннеры кабинета (приостановка, срок подписки) над заголовком страницы. */
+.main > .notice { margin-bottom: 18px; }
 .form-row > .field { margin-top: 0; }
 .sheet-body > p + p, .sheet-body > p + form, .sheet-body > .notice + p, .sheet-body > .notice + form, .sheet-body > p + .form-actions { margin-top: 12px; }
 .sheet-body > .notice { margin-bottom: 12px; }

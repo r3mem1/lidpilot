@@ -38,6 +38,7 @@ LABELS: dict[str, dict[str, str]] = {
         "DELIVERY_FAILED": "Сообщение не доставлено",
         "PROCESSING_FAILED": "Не удалось обработать",
         "BUSINESS_SUSPENDED": "Компания приостановлена",
+        "SUBSCRIPTION_EXPIRED": "Срок подписки истёк — ответьте вручную",
         "CUSTOMER_REPLIED": "Клиент написал после вашего ответа",
     },
     "delivery": {"PENDING": "Отправляется", "SENT": "Доставлено", "FAILED": "Не доставлено"},

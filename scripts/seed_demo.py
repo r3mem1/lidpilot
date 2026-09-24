@@ -46,6 +46,7 @@ from models import (  # noqa: E402
     UserStatus,
     utcnow,
 )
+from services import admin_service  # noqa: E402
 from services.auth_service import hash_password  # noqa: E402
 
 OWNER_EMAIL = "demo@example.com"
@@ -97,6 +98,8 @@ def main() -> None:
         )
         db.add(business)
         db.flush()
+        # Как при POST /businesses: у новой компании пробная подписка (этапы 6, 8).
+        db.add(admin_service.new_trial_subscription(business.id))
         db.add_all(
             [
                 BusinessMember(business_id=business.id, user_id=owner.id, role=MemberRole.OWNER),

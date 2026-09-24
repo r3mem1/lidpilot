@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     trial_days: int = Field(default=14, ge=1, le=365)
     plan_price_start_rub: int = Field(default=1990, ge=0)
     plan_price_pro_rub: int = Field(default=4990, ge=0)
+    # Этап 8: за сколько дней до конца срока кабинет предупреждает владельца.
+    subscription_warning_days: int = Field(default=3, ge=0, le=30)
+    # Куда обращаться за оплатой по счёту (email, @telegram); показывается в кабинете.
+    # Пусто — «напишите в поддержку LeadPilot».
+    billing_contact: str | None = Field(default=None, max_length=200)
 
     # --- Каналы и обработка сообщений (этап 3, разделы 11, 16, 18) ---
     # Публичный HTTPS-адрес приложения: по нему Telegram присылает webhook
@@ -155,6 +160,7 @@ class Settings(BaseSettings):
         "public_base_url",
         "secrets_encryption_key",
         "sentry_dsn",
+        "billing_contact",
         mode="before",
     )
     @classmethod

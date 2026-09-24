@@ -43,6 +43,7 @@ from models import (
     LeadPriority,
     LeadStatus,
     MemberRole,
+    SubscriptionPlan,
     User,
 )
 from services import (
@@ -51,6 +52,8 @@ from services import (
     integration_service,
     lead_service,
     message_service,
+    onboarding_service,
+    subscription_service,
     team_service,
 )
 from services.access_service import (
@@ -198,6 +201,8 @@ def render(
         "active": active,
         "title": title,
         "attention_count": analytics_service.attention_count(db, ctx.business_id),
+        # Этап 8: тариф и срок — баннер об окончании срока на всех страницах кабинета.
+        "subscription": subscription_service.subscription_info(db, ctx.business_id),
         **data,
     }
     return templates.TemplateResponse(request, template, context)
@@ -298,9 +303,8 @@ def dashboard(
     hot_leads = lead_service.list_leads(
         db, ctx, priority=LeadPriority.HOT, lead_status=LeadStatus.NEW, limit=5
     )
-    integrations = integration_service.list_integrations(db, ctx) if _is_owner(ctx) else []
-    services = business_service.list_services(db, ctx)
-    telegram_active = any(i.status.value == "ACTIVE" for i in integrations)
+    # Этап 8: чек-лист onboarding видит владелец, пока не выполнены все шаги.
+    steps = onboarding_service.steps(db, ctx) if _is_owner(ctx) else []
     return render(
         request,
         db,
@@ -311,10 +315,10 @@ def dashboard(
         summary=summary,
         queue=queue,
         hot_leads=hot_leads,
-        setup={
-            "services": any(s.active for s in services),
-            "telegram": telegram_active,
-            "show": _is_owner(ctx) and not (any(s.active for s in services) and telegram_active),
+        onboarding={
+            "steps": steps,
+            "done": sum(step.done for step in steps),
+            "show": bool(steps) and not all(step.done for step in steps),
         },
     )
 
@@ -616,6 +620,11 @@ def settings_page(
         telegram=telegram,
         webhook_url=integration_service.webhook_url(),
         webhook_ready=bool((settings.public_base_url or "").lower().startswith("https://")),
+        plans=[
+            (plan, subscription_service.plan_price(plan))
+            for plan in (SubscriptionPlan.START, SubscriptionPlan.PRO)
+        ],
+        billing_contact=settings.billing_contact,
     )
 
 

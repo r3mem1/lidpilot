@@ -62,6 +62,7 @@ from services import (
     integration_service,
     lead_service,
     secret_store,
+    subscription_service,
 )
 from services.access_service import BusinessContext
 
@@ -369,6 +370,24 @@ def _run(db: Session, message_id: int) -> None:
             db,
             audit_service.EventType.MESSAGE_SKIPPED,
             "Компания приостановлена: сообщение сохранено, AI не запускался",
+            business_id=business_id,
+            level=LogLevel.WARNING,
+            payload=log_context,
+        )
+        db.commit()
+        return
+
+    # Срок trial или оплаченного периода истёк (этап 8): как при suspended —
+    # сообщение сохранено и видно менеджеру, AI не вызывается, клиенту ничего не уходит.
+    if not subscription_service.ai_allowed(db, business_id):
+        conversation.status = ConversationStatus.NEEDS_ATTENTION
+        conversation.attention_reason = "SUBSCRIPTION_EXPIRED"
+        message.processing_status = ProcessingStatus.DONE
+        message.processing_error = "Срок подписки истёк"
+        _log(
+            db,
+            audit_service.EventType.MESSAGE_SKIPPED,
+            "Срок подписки истёк: сообщение сохранено, AI не запускался",
             business_id=business_id,
             level=LogLevel.WARNING,
             payload=log_context,

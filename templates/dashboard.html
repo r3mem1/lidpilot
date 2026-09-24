@@ -9,23 +9,17 @@
   <div class="actions"><a class="btn" href="/cabinet/{{ business_id }}/messages">Все сообщения</a></div>
 </header>
 
-{% if setup.show %}
+{% if onboarding.show %}
   <section class="sheet">
-    <div class="sheet-head"><h2>Осталось настроить, чтобы ассистент заработал</h2></div>
+    <div class="sheet-head"><h2>Осталось настроить, чтобы ассистент заработал</h2><span class="tag">{{ onboarding.done }} из {{ onboarding.steps|length }}</span></div>
     <div class="sheet-body">
       <ol class="steps">
-        <li data-done="{{ 'true' if setup.services else 'false' }}">
-          <span class="step-text">Добавьте услуги и цены<small>Ассистент называет цены только из вашего прайса.</small></span>
-          <a class="btn btn--small" href="/cabinet/{{ business_id }}/services">К услугам</a>
+        {% for step in onboarding.steps %}
+        <li data-done="{{ 'true' if step.done else 'false' }}">
+          <span class="step-text">{{ step.title }}<small>{{ step.hint }}</small></span>
+          {% if not step.done %}<a class="btn btn--small" href="{{ step.link }}">{{ step.link_text }}</a>{% endif %}
         </li>
-        <li data-done="{{ 'true' if setup.telegram else 'false' }}">
-          <span class="step-text">Подключите Telegram-бота<small>Через него клиенты будут писать вам.</small></span>
-          <a class="btn btn--small" href="/cabinet/{{ business_id }}/settings">К настройкам</a>
-        </li>
-        <li data-done="false">
-          <span class="step-text">Проверьте ответы ассистента<small>Задайте вопрос так, как его задал бы клиент.</small></span>
-          <a class="btn btn--small" href="/cabinet/{{ business_id }}/ai">Проверить</a>
-        </li>
+        {% endfor %}
       </ol>
     </div>
   </section>

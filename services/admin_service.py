@@ -47,6 +47,7 @@ from schemas import (
     AdminSubscriptionUpdate,
 )
 from services import audit_service
+from services.subscription_service import as_utc, plan_price
 
 ERROR_LEVELS = (LogLevel.ERROR, LogLevel.CRITICAL)
 MAX_LAST_ERROR = 300
@@ -55,15 +56,6 @@ MAX_LAST_ERROR = 300
 # --------------------------------------------------------------------------- #
 # Тарифы и подписки (раздел 15)
 # --------------------------------------------------------------------------- #
-def plan_price(plan: SubscriptionPlan) -> int:
-    """Месячная цена тарифа, ₽ (заглушки из настроек: ТЗ сетку не задаёт)."""
-    return {
-        SubscriptionPlan.TRIAL: 0,
-        SubscriptionPlan.START: settings.plan_price_start_rub,
-        SubscriptionPlan.PRO: settings.plan_price_pro_rub,
-    }[plan]
-
-
 def new_trial_subscription(business_id: int) -> Subscription:
     """Пробная подписка новой компании (вызывается при создании компании)."""
     now = utcnow()
@@ -86,15 +78,8 @@ def ensure_subscription(db: Session, business: Business) -> Subscription:
     return subscription
 
 
-def _aware(value: datetime | None) -> datetime | None:
-    """SQLite отдаёт даты без часового пояса — приводим к UTC для сравнений."""
-    if value is not None and value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
-
-
 def is_trial_expired(business: Business, subscription: Subscription, now: datetime) -> bool:
-    expires_at = _aware(subscription.expires_at)
+    expires_at = as_utc(subscription.expires_at)
     return (
         business.status is BusinessStatus.TRIAL
         and subscription.plan is SubscriptionPlan.TRIAL
@@ -297,7 +282,7 @@ def set_business_status(
 
 
 def _snapshot(subscription: Subscription) -> dict[str, Any]:
-    expires_at = _aware(subscription.expires_at)
+    expires_at = as_utc(subscription.expires_at)
     return {
         "plan": subscription.plan.value,
         "status": subscription.status.value,
@@ -328,7 +313,7 @@ def update_subscription(
     if payload.expires_on is not None:
         subscription.expires_at = datetime.combine(payload.expires_on, time(23, 59, 59), tzinfo=UTC)
     if payload.extend_days is not None:
-        current = _aware(subscription.expires_at)
+        current = as_utc(subscription.expires_at)
         base = current if current is not None and current > now else now
         subscription.expires_at = base + timedelta(days=payload.extend_days)
 
