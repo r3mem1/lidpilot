@@ -139,6 +139,23 @@ async def _reprocess_loop() -> None:
         await asyncio.sleep(settings.reprocess_interval_seconds)
 
 
+async def _log_retention_loop() -> None:
+    """Раздел 17: system_logs не растёт бесконечно — старые события удаляются
+    раз в system_logs_purge_interval_hours (первый запуск — при старте)."""
+    while True:
+        try:
+            deleted = await run_in_threadpool(
+                audit_service.purge_old_logs, settings.system_logs_retention_days
+            )
+            if deleted:
+                logger.info("Очистка system_logs: удалено событий — %s", deleted)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - цикл не должен умирать из-за одного сбоя
+            logger.exception("Сбой очистки system_logs")
+        await asyncio.sleep(settings.system_logs_purge_interval_hours * 3600)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _check_production_safety()
@@ -155,16 +172,18 @@ async def lifespan(app: FastAPI):
         "sqlite" if settings.is_sqlite else "postgresql",
     )
     logger.info("Внешний трекер ошибок Sentry: %s", "включён" if MONITORING_ENABLED else "выключен")
-    reprocess_task = None
+    tasks: list[asyncio.Task] = []
     if settings.reprocess_interval_seconds > 0:
-        reprocess_task = asyncio.create_task(_reprocess_loop())
+        tasks.append(asyncio.create_task(_reprocess_loop()))
+    if settings.system_logs_retention_days > 0 and settings.system_logs_purge_interval_hours > 0:
+        tasks.append(asyncio.create_task(_log_retention_loop()))
     try:
         yield
     finally:
-        if reprocess_task is not None:
-            reprocess_task.cancel()
+        for task in tasks:
+            task.cancel()
             with suppress(asyncio.CancelledError):
-                await reprocess_task
+                await task
 
 
 app = FastAPI(

@@ -66,7 +66,7 @@ python smoke_test_stage3.py  # 139 проверок этапа 3: webhook, ид�
 python smoke_test_stage4.py  # 121 проверка этапа 4: лиды, ручной ответ, «решено», клиенты
 python smoke_test_stage5.py  # 181 проверка этапа 5: страницы и роли, XSS/CSRF/CSP, команда, аналитика
 python smoke_test_stage6.py  # 134 проверки этапа 6: доступ ADMIN, статусы, тарифы, MRR, журнал, XSS/CSRF
-python smoke_test_stage7.py  # 27 проверок этапа 7: Sentry без PII и секретов
+python smoke_test_stage7.py  # 36 проверок этапа 7: Sentry без PII и секретов, срок хранения журнала
 ```
 
 Пошаговая инструкция ручной проверки (Swagger, OpenRouter, настоящий Telegram) —
@@ -83,6 +83,10 @@ Telegram подменяется `httpx.MockTransport`, LLM — офлайн-ре
 только для оповещений. В события не попадают тела запросов (текст клиентов),
 заголовки, query-строки, локальные переменные, токены ботов, Bearer-токены и email
 (`monitoring.py`). Алерт настраивается в Sentry: Alerts → «новая проблема» → email.
+
+Журнал `system_logs` хранится `SYSTEM_LOGS_RETENTION_DAYS` дней (по умолчанию 90;
+действия ADMIN — всегда). Деплой, откат, бэкапы, восстановление БД и ротация секретов —
+[docs/operations.md](docs/operations.md).
 
 ## AI pipeline (этап 2)
 

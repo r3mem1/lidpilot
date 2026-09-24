@@ -5,7 +5,8 @@
 при этом в событие не попадают тело запроса (текст клиента), заголовки (cookie,
 secret_token webhook), query-строка, локальные переменные, токен бота из URL Bot API,
 Bearer-токены и email. Без SENTRY_DSN трекер выключен. Сеть не нужна: события
-перехватываются подменённым транспортом Sentry.
+перехватываются подменённым транспортом Sentry. Плюс срок хранения system_logs:
+старые события удаляются пачками, действия ADMIN хранятся всегда, очистка в журнале.
 
 Запуск:  python smoke_test_stage7.py
 """
@@ -18,6 +19,7 @@ import logging
 import os
 import pathlib
 import sys
+from datetime import timedelta
 
 BASE = pathlib.Path(__file__).resolve().parent
 DB = BASE / "test_smoke_stage7.db"
@@ -34,6 +36,7 @@ os.environ.update(
     REPROCESS_INTERVAL_SECONDS="0",
     SENTRY_DSN="https://publickey@sentry.invalid/1",
     SENTRY_TRACES_SAMPLE_RATE="0",
+    SYSTEM_LOGS_PURGE_INTERVAL_HOURS="0",  # очистку вызываем явно, без фонового цикла
 )
 sys.path.insert(0, str(BASE))
 
@@ -46,6 +49,9 @@ from sentry_sdk.transport import Transport  # noqa: E402
 import main  # noqa: E402
 import monitoring  # noqa: E402
 from config import Settings, settings  # noqa: E402
+from database import SessionLocal  # noqa: E402
+from models import LogLevel, SystemLog, utcnow  # noqa: E402
+from services import audit_service  # noqa: E402
 
 PASSED: list[str] = []
 FAILED: list[str] = []
@@ -175,6 +181,74 @@ dump = serialized(transport.events)
 check("breadcrumb запроса к Bot API есть", "api.telegram.org" in dump)
 check("токен бота в breadcrumb вычищен", BOT_TOKEN not in dump)
 check("текст ответа клиенту не в событии", CUSTOMER_TEXT not in dump)
+
+# --------------------------------------------------------------------------- #
+print("\n[5] Срок хранения system_logs")
+ET = audit_service.EventType
+now = utcnow()
+with SessionLocal() as db:
+    db.query(SystemLog).delete()
+    old = now - timedelta(days=100)
+    for i in range(7):
+        db.add(
+            SystemLog(
+                level=LogLevel.INFO,
+                event_type=ET.WEBHOOK_RECEIVED,
+                message=f"old {i}",
+                created_at=old,
+            )
+        )
+    db.add(
+        SystemLog(level=LogLevel.ERROR, event_type=ET.AI_ERROR, message="old error", created_at=old)
+    )
+    db.add(
+        SystemLog(
+            level=LogLevel.WARNING,
+            event_type=ET.ADMIN_BUSINESS_STATUS_CHANGED,
+            message="old admin action",
+            created_at=old,
+        )
+    )
+    db.add(
+        SystemLog(
+            level=LogLevel.INFO,
+            event_type=ET.WEBHOOK_RECEIVED,
+            message="edge",
+            created_at=now - timedelta(days=89),
+        )
+    )
+    db.add(
+        SystemLog(
+            level=LogLevel.INFO, event_type=ET.WEBHOOK_RECEIVED, message="fresh", created_at=now
+        )
+    )
+    db.commit()
+
+check("срок 0 — ничего не удаляется", audit_service.purge_old_logs(0, now=now) == 0)
+deleted = audit_service.purge_old_logs(90, now=now, batch_size=3)
+check("удалены старые события пачками", deleted == 8, f"удалено: {deleted}")
+with SessionLocal() as db:
+    left = {entry.message: entry for entry in db.query(SystemLog).all()}
+check("действие ADMIN старше срока сохранено", "old admin action" in left)
+check("события моложе срока сохранены", {"edge", "fresh"} <= set(left))
+check(
+    "старые события удалены",
+    not any(m.startswith("old ") and m != "old admin action" for m in left),
+)
+purged = [e for e in left.values() if e.event_type == ET.SYSTEM_LOGS_PURGED]
+check(
+    "очистка записана в журнал",
+    len(purged) == 1 and (purged[0].payload or {}).get("deleted") == 8,
+)
+check("повторный запуск ничего не удаляет", audit_service.purge_old_logs(90, now=now) == 0)
+with SessionLocal() as db:
+    count = db.query(SystemLog).filter(SystemLog.event_type == ET.SYSTEM_LOGS_PURGED).count()
+check("пустая очистка не пишет событие", count == 1)
+try:
+    Settings(system_logs_retention_days=-1)  # pyright: ignore[reportCallIssue]
+    check("отрицательный срок отклоняется", False)
+except ValidationError:
+    check("отрицательный срок отклоняется", True)
 
 # --------------------------------------------------------------------------- #
 sentry_sdk.get_client().close()

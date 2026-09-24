@@ -43,7 +43,7 @@ templates/ static/   кабинет (Jinja2)
 | 4 CRM-ядро (лиды, статусы, ручной ответ, фильтры) | ✅ реализован, `smoke_test_stage4.py` |
 | 5 Кабинет бизнеса (dashboard, сообщения, лиды, клиенты, услуги, AI, команда, настройки, аналитика) | ✅ реализован, `smoke_test_stage5.py`, `scripts/e2e_browser.py` |
 | 6 Admin-панель (`/admin`: обзор, компании, статус/тариф/trial, события, метрики, MRR) | ✅ реализован, `smoke_test_stage6.py`, `scripts/e2e_admin.py` |
-| 7 Первый пилот | 🔄 в работе: прод на Render + Supabase, бэкап и restore-drill, Sentry (`monitoring.py`, `smoke_test_stage7.py`); осталось — webhook на проде, 1–3 компании, приёмка §21 на проде |
+| 7 Первый пилот | 🔄 в работе: прод на Render + Supabase, бэкап и restore-drill, Sentry (`monitoring.py`), срок хранения `system_logs`, эксплуатация — `docs/operations.md`; осталось — webhook на проде, 1–3 компании, приёмка §21 на проде |
 | 8–9 SaaS-автоматизация, масштабирование | — |
 
 Не выходить за границы текущего этапа: не добавлять функции из «Не входит в MVP» (§19) — календарь, биллинг, несколько каналов, мобильное приложение.
@@ -60,7 +60,7 @@ python smoke_test_stage3.py            # 139 проверок этапа 3
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 181 проверка этапа 5
 python smoke_test_stage6.py            # 134 проверки этапа 6
-python smoke_test_stage7.py            # 27 проверок этапа 7 (Sentry)
+python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)

@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     webhook_rate_limit_attempts: int = 30
     webhook_rate_limit_window_seconds: int = 60
 
+    # --- Срок хранения system_logs (этап 7, раздел 17) ---
+    # События старше срока удаляются раз в сутки (критические действия ADMIN —
+    # никогда, см. audit_service.RETAINED_EVENT_TYPES). 0 — хранить бессрочно.
+    system_logs_retention_days: int = Field(default=90, ge=0)
+    # Период запуска очистки; 0 — фоновая очистка выключена (тесты).
+    system_logs_purge_interval_hours: int = Field(default=24, ge=0)
+
     # --- Мониторинг (этап 7, раздел 17) ---
     # DSN проекта Sentry; пусто — внешний трекер ошибок выключен (monitoring.py).
     sentry_dsn: str | None = None

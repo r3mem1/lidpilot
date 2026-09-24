@@ -13,11 +13,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Final
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from models import LogLevel, SystemLog
+from database import SessionLocal
+from models import LogLevel, SystemLog, utcnow
 
 logger = logging.getLogger("leadpilot.audit")
 
@@ -84,6 +87,23 @@ class EventType:
     # Платформа
     ADMIN_BOOTSTRAPPED: Final = "ADMIN_BOOTSTRAPPED"
     UNHANDLED_ERROR: Final = "UNHANDLED_ERROR"
+    SYSTEM_LOGS_PURGED: Final = "SYSTEM_LOGS_PURGED"
+
+
+# Срок хранения system_logs (этап 7, раздел 17): критические действия ADMIN
+# (§16 «аудит критических действий») не удаляются никогда — их единицы, а при
+# разборе инцидента важна вся история. Остальное удаляется по сроку.
+RETAINED_EVENT_TYPES: Final = frozenset(
+    {
+        EventType.ADMIN_BUSINESS_STATUS_CHANGED,
+        EventType.ADMIN_SUBSCRIPTION_CHANGED,
+        EventType.ADMIN_BOOTSTRAPPED,
+        EventType.SYSTEM_LOGS_PURGED,
+    }
+)
+# Удаление пачками с коммитом после каждой: короткие транзакции не блокируют
+# запись новых событий на PostgreSQL и SQLite.
+PURGE_BATCH_SIZE: Final = 5000
 
 
 def log_event(
@@ -129,3 +149,50 @@ def log_event(
         meta or {},
     )
     return entry
+
+
+def purge_old_logs(
+    retention_days: int,
+    *,
+    now: datetime | None = None,
+    batch_size: int = PURGE_BATCH_SIZE,
+) -> int:
+    """Удалить события старше retention_days (кроме RETAINED_EVENT_TYPES).
+
+    Вызывается фоновым циклом приложения раз в сутки; повторный или параллельный
+    запуск безопасен. retention_days <= 0 — хранить бессрочно. Возвращает число
+    удалённых записей; если что-то удалено, пишет событие SYSTEM_LOGS_PURGED.
+    """
+    if retention_days <= 0:
+        return 0
+    cutoff = (now or utcnow()) - timedelta(days=retention_days)
+    conditions = (
+        SystemLog.created_at < cutoff,
+        SystemLog.event_type.not_in(RETAINED_EVENT_TYPES),
+    )
+    deleted = 0
+    with SessionLocal() as db:
+        while True:
+            ids = list(
+                db.scalars(
+                    select(SystemLog.id).where(*conditions).order_by(SystemLog.id).limit(batch_size)
+                )
+            )
+            if not ids:
+                break
+            db.execute(delete(SystemLog).where(SystemLog.id.in_(ids)))
+            db.commit()
+            deleted += len(ids)
+        if deleted:
+            log_event(
+                db,
+                event_type=EventType.SYSTEM_LOGS_PURGED,
+                message=f"Удалено событий старше {retention_days} дн.: {deleted}",
+                payload={
+                    "deleted": deleted,
+                    "retention_days": retention_days,
+                    "cutoff": cutoff.isoformat(),
+                },
+                commit=True,
+            )
+    return deleted
