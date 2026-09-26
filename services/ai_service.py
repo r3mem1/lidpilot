@@ -19,6 +19,7 @@ import threading
 
 from sqlalchemy.orm import Session
 
+from ai.booking import ScheduleProvider
 from ai.context import BusinessKnowledge, HistoryTurn
 from ai.pipeline import AIPipeline, Decision, PipelineResult
 from config import settings
@@ -57,6 +58,7 @@ def process_message(
     actor_user_id: int | None = None,
     knowledge: BusinessKnowledge | None = None,
     log_context: dict | None = None,
+    schedule: ScheduleProvider | None = None,
 ) -> PipelineResult:
     """Обработать сообщение клиента для конкретной компании.
 
@@ -70,7 +72,7 @@ def process_message(
     # десятки секунд, и открытая транзакция блокировала бы остальные записи
     # (в SQLite — любых писателей). Всё, что нужно AI, уже прочитано.
     db.commit()
-    result = get_pipeline().process(text, knowledge, history)
+    result = get_pipeline().process(text, knowledge, history, schedule=schedule)
 
     _log_result(
         db,

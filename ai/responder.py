@@ -32,6 +32,8 @@ logger = logging.getLogger("leadpilot.ai.responder")
 class ResponseSource(str, enum.Enum):
     LLM = "LLM"
     OFFLINE_TEMPLATE = "OFFLINE_TEMPLATE"
+    # Вне ТЗ (§22): текст записи собран шаблоном из расписания в БД (ai/booking.py).
+    BOOKING_ENGINE = "BOOKING_ENGINE"
 
 
 @dataclass(frozen=True)

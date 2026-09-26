@@ -74,6 +74,9 @@ class BusinessKnowledge:
     escalation_contact: str | None = None
     services: tuple[ServiceInfo, ...] = field(default_factory=tuple)
     has_schedule_integration: bool = False
+    # Вне ТЗ (§22): имена активных мастеров — для промпта; время и окна AI берёт
+    # только из системы записи (ai/booking.py), не из этого текста.
+    masters: tuple[str, ...] = field(default_factory=tuple)
     # Настройки владельца (раздел 13): стиль ответа и разрешение отвечать автоматически.
     tone: str = "FRIENDLY"
     auto_reply: bool = True
@@ -101,14 +104,18 @@ class BusinessKnowledge:
         else:
             lines.append("Прайс: услуг в базе нет — любые цены называть нельзя.")
 
-        lines.append(
-            "Запись/свободное время: "
-            + (
-                "расписание подключено"
-                if self.has_schedule_integration
-                else "расписание НЕ подключено — конкретное время и наличие мест обещать нельзя"
+        if self.has_schedule_integration:
+            lines.append(
+                "Запись/свободное время: запись ведёт система расписания — сам конкретное время, "
+                "свободные места и запись не называй и не обещай"
             )
-        )
+            if self.masters:
+                lines.append("Мастера: " + ", ".join(self.masters))
+        else:
+            lines.append(
+                "Запись/свободное время: расписание НЕ подключено — "
+                "конкретное время и наличие мест обещать нельзя"
+            )
         return "\n".join(lines)
 
     # ------------------------------------------------------------------ #

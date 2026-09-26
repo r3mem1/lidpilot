@@ -22,6 +22,7 @@ from models import (
     Business,
     BusinessMember,
     BusinessStatus,
+    Master,
     MemberRole,
     Service,
     User,
@@ -243,6 +244,13 @@ def build_ai_context(db: Session, business: Business) -> BusinessKnowledge:
         .where(Service.business_id == business.id, Service.active.is_(True))
         .order_by(Service.name)
     )
+    masters = list(
+        db.scalars(
+            select(Master.display_name)
+            .where(Master.business_id == business.id, Master.active.is_(True))
+            .order_by(Master.display_name)
+        )
+    )
     return BusinessKnowledge(
         business_id=business.id,
         name=business.name,
@@ -262,8 +270,10 @@ def build_ai_context(db: Session, business: Business) -> BusinessKnowledge:
             )
             for s in services
         ),
-        # Интеграции с календарём в MVP нет (раздел 19) — AI не обещает время.
-        has_schedule_integration=False,
+        # Вне ТЗ (§22): запись по расписанию мастеров, если владелец её включил и
+        # есть активные мастера. Иначе, как в MVP (раздел 19), AI время не обещает.
+        has_schedule_integration=business.booking_enabled and bool(masters),
+        masters=tuple(masters),
         tone=business.ai_tone.value,
         auto_reply=business.ai_auto_reply,
     )

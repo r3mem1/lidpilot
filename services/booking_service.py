@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -38,14 +39,19 @@ from models import (
 from services import audit_service, master_service, schedule_service
 from services.access_service import BusinessContext
 
+logger = logging.getLogger("leadpilot.booking")
+
 ACTIVE = (BookingStatus.PENDING, BookingStatus.CONFIRMED)
 DEFAULT_DURATION_MINUTES = 60  # у услуги без длительности
 MIN_LEAD_MINUTES = 60  # не предлагать время раньше чем через час
 HORIZON_DAYS = 14  # насколько вперёд ищет AI
 
-# Хуки побочных эффектов: подключаются модулями уведомлений и сообщений клиенту,
-# чтобы booking_service не зависел от каналов (слои, раздел 18).
-on_booking_event: list[Callable[[Session, Booking, str], None]] = []
+# Хуки побочных эффектов (сообщение клиенту, уведомление мастеру): подключаются
+# модулями каналов, чтобы booking_service от них не зависел. Хук вызывается ДО
+# коммита (сохраняет исходящее сообщение в той же транзакции) и может вернуть
+# действие, которое выполнится ПОСЛЕ коммита (отправка) — раздел 18.
+BookingHook = Callable[[Session, Booking, str], Callable[[], None] | None]
+on_booking_event: list[BookingHook] = []
 
 
 class BookingConflict(Exception):
@@ -244,8 +250,9 @@ def create_booking(
             "starts_at": starts_at.isoformat(),
         },
     )
-    _fire(db, booking, "held" if source is BookingSource.AI else "created")
+    after = _fire(db, booking, "held" if source is BookingSource.AI else "created")
     db.commit()
+    _run_after_commit(after)
     db.refresh(booking)
     return booking
 
@@ -257,9 +264,21 @@ def _allowed_service_ids(db: Session, master: Master, business_id: int) -> set[i
     return set(db.scalars(select(Service.id).where(Service.business_id == business_id)))
 
 
-def _fire(db: Session, booking: Booking, event: str) -> None:
+def _fire(db: Session, booking: Booking, event: str) -> list[Callable[[], None]]:
+    after: list[Callable[[], None]] = []
     for hook in on_booking_event:
-        hook(db, booking, event)
+        action = hook(db, booking, event)
+        if action is not None:
+            after.append(action)
+    return after
+
+
+def _run_after_commit(actions: list[Callable[[], None]]) -> None:
+    for action in actions:
+        try:
+            action()
+        except Exception:  # noqa: BLE001 - отправка повторится фоновым циклом
+            logger.exception("Побочное действие после записи не выполнено")
 
 
 # --------------------------------------------------------------------------- #
@@ -345,8 +364,9 @@ def _decide(
         actor_user_id=ctx.user.id,
         payload={"booking_id": booking.id, "from": previous.value, "to": to.value},
     )
-    _fire(db, booking, to.value.lower())
+    after = _fire(db, booking, to.value.lower())
     db.commit()
+    _run_after_commit(after)
     db.refresh(booking)
     return booking
 

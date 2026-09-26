@@ -30,7 +30,7 @@ from config import settings
 
 logger = logging.getLogger("leadpilot.ai.llm")
 
-Purpose = Literal["classify", "respond"]
+Purpose = Literal["classify", "respond", "booking"]
 
 
 class LLMError(Exception):

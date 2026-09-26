@@ -23,8 +23,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from sqlalchemy import and_, func, or_, select, update
@@ -32,6 +33,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ai.booking import BookingKind, format_when
 from ai.context import HistoryRole, HistoryTurn
 from ai.pipeline import Decision, EscalationReason
 from config import settings
@@ -40,6 +42,7 @@ from integrations.base import ChannelSendError, IncomingMessage
 from models import (
     AiResponse,
     AiResponseStatus,
+    Booking,
     Business,
     BusinessStatus,
     Channel,
@@ -51,16 +54,21 @@ from models import (
     Lead,
     LeadPriority,
     LogLevel,
+    Master,
     Message,
     ProcessingStatus,
     SenderType,
+    Service,
     utcnow,
 )
 from services import (
     ai_service,
     audit_service,
+    booking_ai_provider,
+    booking_service,
     integration_service,
     lead_service,
+    schedule_service,
     secret_store,
     subscription_service,
 )
@@ -428,10 +436,21 @@ def _run(db: Session, message_id: int) -> None:
     history = _load_history(db, conversation_id, message.id)
     ai_text = "" if message.content_type == "attachment" else message.text
     prior_status = conversation.status
+    # Вне ТЗ (§22): расписание мастеров для AI-записи (None — запись выключена).
+    customer = db.get_one(Customer, conversation.customer_id)
+    schedule = booking_ai_provider.for_conversation(
+        db,
+        business,
+        conversation_id=conversation_id,
+        customer_id=customer.id,
+        client_name=_client_name(customer),
+    )
 
     # process_message освобождает транзакцию перед обращением к LLM (commit),
     # поэтому объекты ниже перечитываются из БД.
-    result = ai_service.process_message(db, business, ai_text, history, log_context=log_context)
+    result = ai_service.process_message(
+        db, business, ai_text, history, log_context=log_context, schedule=schedule
+    )
 
     message = db.get(Message, message_id)
     conversation = db.get(Conversation, conversation_id)
@@ -463,6 +482,10 @@ def _run(db: Session, message_id: int) -> None:
         )
     else:
         reply_text = result.reply_text
+    if result.booking is not None and result.booking.kind is BookingKind.HOLD:
+        # Бронь поставлена — её должен подтвердить человек (решение заказчика).
+        conversation.status = ConversationStatus.NEEDS_ATTENTION
+        conversation.attention_reason = "BOOKING_PENDING"
 
     outgoing: Message | None = None
     if reply_text:
@@ -942,3 +965,69 @@ def set_customer_channel_blocked(
         )
     db.commit()
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Решение по брони → сообщение клиенту (вне ТЗ, §22)
+# --------------------------------------------------------------------------- #
+def _client_name(customer: Customer) -> str:
+    if customer.name:
+        return customer.name
+    return f"@{customer.username}" if customer.username else "Клиент"
+
+
+def _booking_text(db: Session, booking: Booking, event: str) -> str | None:
+    business = db.get_one(Business, booking.business_id)
+    tz = schedule_service.business_tz(business)
+    starts = (
+        booking.starts_at if booking.starts_at.tzinfo else booking.starts_at.replace(tzinfo=UTC)
+    )
+    local = starts.astimezone(tz)
+    when = format_when(local, datetime.now(tz).date())
+    master = db.get(Master, booking.master_id)
+    service = db.get(Service, booking.service_id) if booking.service_id else None
+    service_name = service.name if service else "услуга"
+    what = f"«{service_name}» у мастера {master.display_name if master else ''}".strip()
+    if event == "confirmed":
+        address = f" Адрес: {business.address}." if business.address else ""
+        return f"Запись подтверждена: {what}, {when}. Ждём вас!{address}"
+    if event == "rejected":
+        return (
+            f"К сожалению, не получилось подтвердить запись {when}. "
+            "Администратор свяжется с вами, чтобы подобрать другое время."
+        )
+    if event == "cancelled":
+        return f"Ваша запись {when} ({what}) отменена. Напишите, если хотите выбрать другое время."
+    return None
+
+
+def _booking_client_message(db: Session, booking: Booking, event: str) -> Callable[[], None] | None:
+    """Хук booking_service: сообщение клиенту в его канал. Сохраняется в транзакции
+    решения, отправляется после коммита (сначала сохранить — раздел 18)."""
+    if booking.conversation_id is None:
+        return None
+    text = _booking_text(db, booking, event)
+    conversation = db.get(Conversation, booking.conversation_id)
+    if text is None or conversation is None:
+        return None
+    outgoing = Message(
+        business_id=booking.business_id,
+        conversation_id=conversation.id,
+        sender_type=SenderType.MANAGER,
+        text=text,
+        content_type="text",
+        author_user_id=booking.decided_by_user_id,
+        delivery_status=DeliveryStatus.PENDING,
+    )
+    db.add(outgoing)
+    conversation.updated_at = utcnow()
+    db.flush()
+    message_id = outgoing.id
+
+    def send() -> None:
+        deliver_outgoing(db, message_id)
+
+    return send
+
+
+booking_service.on_booking_event.append(_booking_client_message)

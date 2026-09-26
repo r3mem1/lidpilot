@@ -16,12 +16,19 @@ import enum
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from ai.booking import (
+    BOOKING_PROMPT_VERSION,
+    BookingEngine,
+    BookingKind,
+    BookingOutcome,
+    ScheduleProvider,
+)
 from ai.classifier import Classification, Intent, MessageClassifier, Priority
 from ai.context import BusinessKnowledge, HistoryTurn
 from ai.llm_client import LLMClient, LLMError, get_llm_client
-from ai.responder import GeneratedResponse, Responder
+from ai.responder import GeneratedResponse, Responder, ResponseSource
 from ai.validator import ResponseValidator, ValidationResult
 
 logger = logging.getLogger("leadpilot.ai.pipeline")
@@ -67,6 +74,8 @@ class PipelineResult:
     escalation_reason: EscalationReason | None = None
     escalation_detail: str | None = None
     latency_ms: int = 0
+    # Вне ТЗ (§22): итог работы системы записи (бронь, предложенные окна).
+    booking: BookingOutcome | None = None
 
     @property
     def needs_manager(self) -> bool:
@@ -110,6 +119,8 @@ class PipelineResult:
             payload["response_latency_ms"] = self.response.latency_ms
         if self.validation:
             payload["validation"] = self.validation.as_dict()
+        if self.booking:
+            payload["booking"] = self.booking.as_dict()
         return payload
 
 
@@ -179,12 +190,14 @@ class AIPipeline:
         self._classifier = classifier or MessageClassifier(self._client)
         self._responder = responder or Responder(self._client)
         self._validator = validator or ResponseValidator()
+        self._booking = BookingEngine(self._client)
 
     def process(
         self,
         text: str,
         knowledge: BusinessKnowledge,
         history: list[HistoryTurn] | None = None,
+        schedule: ScheduleProvider | None = None,
     ) -> PipelineResult:
         started = time.monotonic()
         history = history or []
@@ -212,6 +225,11 @@ class AIPipeline:
 
         # Шаги Intent + Priority classification.
         classification = self._classifier.classify(normalized, history, knowledge)
+
+        # Вне ТЗ (§22): запись по расписанию. Жалоба, спам и попытка обхода правил
+        # по-прежнему уходят человеку; время и окна — только из расписания в БД.
+        if schedule is not None and self._booking_applies(classification, knowledge, schedule):
+            return self._handle_booking(normalized, history, classification, schedule, elapsed)
 
         # Человек нужен ещё до генерации: жалоба, запись, спам, ошибка API,
         # неоднозначный запрос (раздел 6.7). Автоответ в этих случаях не даём.
@@ -296,4 +314,68 @@ class AIPipeline:
             response=response,
             validation=validation,
             latency_ms=elapsed(),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Запись по расписанию (вне ТЗ, §22)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _booking_applies(
+        classification: Classification,
+        knowledge: BusinessKnowledge,
+        schedule: ScheduleProvider | None,
+    ) -> bool:
+        if schedule is None or not knowledge.has_schedule_integration or not knowledge.auto_reply:
+            return False
+        if classification.action_not_allowed or classification.intent in (
+            Intent.COMPLAINT,
+            Intent.SPAM,
+        ):
+            return False
+        return classification.intent is Intent.BOOKING or schedule.in_booking_dialog()
+
+    def _handle_booking(
+        self,
+        normalized: str,
+        history: list[HistoryTurn],
+        classification: Classification,
+        schedule: ScheduleProvider,
+        elapsed,
+    ) -> PipelineResult:
+        started = time.monotonic()
+        outcome = self._booking.handle(normalized, history, schedule)
+        classification = replace(
+            classification,
+            intent=Intent.BOOKING,
+            priority=Priority.HOT,
+            needs_manager=outcome.kind in (BookingKind.HOLD, BookingKind.NO_SLOTS),
+            reason=f"{classification.reason}; запись по расписанию: {outcome.kind.value}",
+        )
+        if outcome.kind is BookingKind.NO_SLOTS or not outcome.reply:
+            return PipelineResult(
+                decision=Decision.ESCALATE,
+                normalized_text=normalized,
+                classification=classification,
+                escalation_reason=EscalationReason.HOT_LEAD_CONFIRMATION,
+                escalation_detail="Свободного времени по расписанию не найдено",
+                latency_ms=elapsed(),
+                booking=outcome,
+            )
+        response = GeneratedResponse(
+            text=outcome.reply,
+            model="booking-engine" if outcome.source == "RULES" else "booking-engine+llm",
+            prompt_version=BOOKING_PROMPT_VERSION,
+            latency_ms=int((time.monotonic() - started) * 1000),
+            source=ResponseSource.BOOKING_ENGINE,
+        )
+        # Валидатор LLM-текста не применяется: ответ собран шаблоном только из
+        # данных расписания в БД, свободное время в нём — результат запроса к БД.
+        return PipelineResult(
+            decision=Decision.SEND,
+            normalized_text=normalized,
+            classification=classification,
+            reply_text=outcome.reply,
+            response=response,
+            latency_ms=elapsed(),
+            booking=outcome,
         )
