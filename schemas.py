@@ -11,9 +11,10 @@ Pydantic-схемы (контракты API) — раздел 11 ТЗ.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     BaseModel,
@@ -32,6 +33,8 @@ from config import settings
 from models import (
     AiResponseStatus,
     AiTone,
+    BookingSource,
+    BookingStatus,
     BusinessStatus,
     Channel,
     ConversationStatus,
@@ -145,11 +148,33 @@ class BusinessUpdate(BaseModel):
     ai_tone: AiTone | None = None
     ai_auto_reply: bool | None = None
     escalation_contact: str | None = Field(default=None, max_length=255)
+    # Запись к мастерам (вне ТЗ, §22): часовой пояс расписания, AI-бронь, шаг сетки.
+    timezone: str | None = Field(default=None, max_length=64)
+    booking_enabled: bool | None = None
+    slot_step_minutes: int | None = Field(default=None, ge=5, le=120)
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Неизвестный часовой пояс") from exc
+        return value
 
     @model_validator(mode="after")
     def _required_fields_not_null(self) -> BusinessUpdate:
         """Обязательные поля можно менять, но не обнулять: иначе ошибка БД (500)."""
-        for field in ("name", "ai_tone", "ai_auto_reply"):
+        for field in (
+            "name",
+            "ai_tone",
+            "ai_auto_reply",
+            "timezone",
+            "booking_enabled",
+            "slot_step_minutes",
+        ):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} не может быть null")
         return self
@@ -169,6 +194,9 @@ class BusinessOut(ORMModel):
     ai_auto_reply: bool
     escalation_contact: str | None
     status: BusinessStatus
+    timezone: str = "Europe/Moscow"
+    booking_enabled: bool = False
+    slot_step_minutes: int = 30
     created_at: datetime
     updated_at: datetime
 
@@ -587,3 +615,85 @@ class AdminLogPage(BaseModel):
     limit: int
     offset: int
     items: list[AdminLogItem]
+
+
+# --------------------------------------------------------------------------- #
+# Мастера, смены и записи (вне ТЗ, §22 «автоматическая запись»)
+# --------------------------------------------------------------------------- #
+class MasterCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+    user_id: int | None = Field(default=None, ge=1)
+
+
+class MasterUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    active: bool | None = None
+
+
+class MasterServicesUpdate(BaseModel):
+    service_ids: list[int] = Field(default_factory=list, max_length=500)
+
+
+class MasterOut(ORMModel):
+    id: int
+    business_id: int
+    user_id: int | None
+    display_name: str
+    active: bool
+    notify_channel: Channel | None
+    notify_linked: bool = False
+    service_ids: list[int] = Field(default_factory=list)
+
+
+class ShiftCreate(BaseModel):
+    day: date
+    start_time: time
+    end_time: time
+
+
+class ShiftUpdate(BaseModel):
+    start_time: time
+    end_time: time
+
+
+class ShiftOut(ORMModel):
+    id: int
+    master_id: int
+    day: date
+    start_time: time
+    end_time: time
+
+
+class BookingCreate(BaseModel):
+    """Ручная запись сотрудником: дата и время — в часовом поясе компании."""
+
+    master_id: int = Field(ge=1)
+    service_id: int = Field(ge=1)
+    day: date
+    start_time: time
+    client_name: str = Field(min_length=1, max_length=255)
+    comment: str | None = Field(default=None, max_length=1000)
+
+
+class BookingOut(ORMModel):
+    id: int
+    business_id: int
+    master_id: int
+    service_id: int | None
+    customer_id: int | None
+    conversation_id: int | None
+    client_name: str
+    starts_at: datetime
+    ends_at: datetime
+    status: BookingStatus
+    source: BookingSource
+    comment: str | None
+    created_at: datetime
+
+
+class SlotOut(BaseModel):
+    master_id: int
+    master_name: str
+    starts_at: datetime
+    ends_at: datetime
+    local_start: datetime

@@ -14,7 +14,7 @@ ALTER TYPE.
 from __future__ import annotations
 
 import enum
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -22,13 +22,17 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
+    Time,
     UniqueConstraint,
+    false,
     true,
 )
 from sqlalchemy import Enum as SAEnum
@@ -73,6 +77,30 @@ class MemberRole(str, enum.Enum):
 
     OWNER = "OWNER"
     MANAGER = "MANAGER"
+    # Вне ТЗ (§22 «автоматическая запись»): мастер видит и ведёт только своё
+    # расписание и свои записи; остальные разделы кабинета ему закрыты.
+    MASTER = "MASTER"
+
+
+class BookingStatus(str, enum.Enum):
+    """Статус записи клиента к мастеру. PENDING — бронь (слот занят),
+    ждёт подтверждения менеджера или мастера."""
+
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class BookingSource(str, enum.Enum):
+    AI = "AI"  # бронь поставил ассистент по сообщению клиента
+    STAFF = "STAFF"  # запись создал сотрудник в кабинете
+
+
+class NotificationStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    SENT = "SENT"
+    FAILED = "FAILED"
 
 
 class AiTone(str, enum.Enum):
@@ -180,6 +208,17 @@ class Business(Base):
     )
     status: Mapped[BusinessStatus] = enum_column(
         BusinessStatus, nullable=False, default=BusinessStatus.TRIAL
+    )
+    # Запись к мастерам (вне ТЗ, §22): часовой пояс расписания, разрешение AI ставить
+    # брони и шаг сетки свободного времени.
+    timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="Europe/Moscow", server_default="Europe/Moscow"
+    )
+    booking_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    slot_step_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=30, server_default="30"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
@@ -673,3 +712,147 @@ class Invitation(Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# --------------------------------------------------------------------------- #
+# Мастера, смены и записи (вне ТЗ, §22 «интеграция с календарями, автоматическая запись»)
+# --------------------------------------------------------------------------- #
+class Master(Base):
+    """Мастер компании. user_id — участник с ролью MASTER; без аккаунта (NULL)
+    расписание мастера ведёт владелец. Уведомления о записях мастер получает
+    от бота/сообщества компании в выбранном канале (notify_*)."""
+
+    __tablename__ = "masters"
+    __table_args__ = (UniqueConstraint("business_id", "user_id", name="uq_masters_business_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    notify_channel: Mapped[Channel | None] = enum_column(Channel)
+    notify_chat_id: Mapped[str | None] = mapped_column(String(64))
+    # Одноразовый код привязки уведомлений: только SHA-256 и срок (раздел 16).
+    notify_code_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    notify_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class MasterService(Base):
+    """Какие услуги выполняет мастер (AI предлагает только подходящих мастеров)."""
+
+    __tablename__ = "master_services"
+    __table_args__ = (UniqueConstraint("master_id", "service_id", name="uq_master_services_pair"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    master_id: Mapped[int] = mapped_column(
+        ForeignKey("masters.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+
+class MasterShift(Base):
+    """Рабочий интервал мастера на конкретную дату (время — в зоне компании).
+    В один день может быть несколько интервалов (перерыв между ними)."""
+
+    __tablename__ = "master_shifts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+    )
+    master_id: Mapped[int] = mapped_column(
+        ForeignKey("masters.id", ondelete="CASCADE"), nullable=False
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+Index("ix_master_shifts_business_day", MasterShift.business_id, MasterShift.day)
+Index("ix_master_shifts_master_day", MasterShift.master_id, MasterShift.day)
+
+
+class Booking(Base):
+    """Запись клиента к мастеру. Время — UTC; активные статусы (PENDING, CONFIRMED)
+    занимают интервал мастера: пересечение проверяется под блокировкой строки мастера."""
+
+    __tablename__ = "bookings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+    )
+    master_id: Mapped[int] = mapped_column(
+        ForeignKey("masters.id", ondelete="CASCADE"), nullable=False
+    )
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id", ondelete="SET NULL"))
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"), index=True
+    )
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    client_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[BookingStatus] = enum_column(
+        BookingStatus, nullable=False, default=BookingStatus.PENDING
+    )
+    source: Mapped[BookingSource] = enum_column(BookingSource, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+Index("ix_bookings_business_starts", Booking.business_id, Booking.starts_at)
+Index("ix_bookings_master_starts", Booking.master_id, Booking.starts_at)
+
+
+class MasterNotification(Base):
+    """Outbox уведомлений мастеру: сначала запись, потом отправка (раздел 18);
+    неотправленные повторяет фоновый цикл."""
+
+    __tablename__ = "master_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+    )
+    master_id: Mapped[int] = mapped_column(
+        ForeignKey("masters.id", ondelete="CASCADE"), nullable=False
+    )
+    channel: Mapped[Channel] = enum_column(Channel, nullable=False)
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[NotificationStatus] = enum_column(
+        NotificationStatus, nullable=False, default=NotificationStatus.PENDING
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+Index("ix_master_notifications_status", MasterNotification.status)

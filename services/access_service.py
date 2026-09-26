@@ -23,12 +23,15 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from models import (
+    Booking,
     Business,
     BusinessMember,
     Conversation,
     Customer,
     Lead,
     LogLevel,
+    Master,
+    MasterShift,
     MemberRole,
     Service,
     User,
@@ -336,5 +339,45 @@ def require_customer_access(*allowed: MemberRole):
         db: Session = Depends(get_db),
     ) -> tuple[Customer, BusinessContext]:
         return _load_child(db, user, Customer, customer_id, "Клиент", allowed)
+
+    return dependency
+
+
+def require_master_access(*allowed: MemberRole):
+    """Для /masters/{master_id} (вне ТЗ, §22): мастер чужой компании — 404."""
+
+    def dependency(
+        master_id: int = Path(..., ge=1),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> tuple[Master, BusinessContext]:
+        return _load_child(db, user, Master, master_id, "Мастер", allowed)
+
+    return dependency
+
+
+def require_shift_access(*allowed: MemberRole):
+    """Для /shifts/{shift_id}."""
+
+    def dependency(
+        shift_id: int = Path(..., ge=1),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> tuple[MasterShift, BusinessContext]:
+        return _load_child(db, user, MasterShift, shift_id, "Смена", allowed)
+
+    return dependency
+
+
+def require_booking_access(*allowed: MemberRole):
+    """Для /bookings/{booking_id}. Мастер дополнительно видит только свои записи
+    (booking_service.assert_can_view)."""
+
+    def dependency(
+        booking_id: int = Path(..., ge=1),
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> tuple[Booking, BusinessContext]:
+        return _load_child(db, user, Booking, booking_id, "Запись", allowed)
 
     return dependency

@@ -33,7 +33,7 @@ from schemas import (
     ServiceCreate,
     ServiceUpdate,
 )
-from services import admin_service, audit_service
+from services import admin_service, audit_service, master_service
 from services.access_service import BusinessContext
 from services.auth_service import get_user_by_email
 
@@ -209,6 +209,9 @@ def add_member(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Пользователь уже добавлен в компанию"
         ) from exc
+    if payload.role is MemberRole.MASTER:
+        # Вне ТЗ (§22): у мастера сразу есть профиль для расписания и записей.
+        master_service.ensure_master_for_member(db, ctx.business_id, user)
 
     audit_service.log_event(
         db,

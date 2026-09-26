@@ -38,6 +38,7 @@ from monitoring import init_monitoring
 from routes import admin as admin_routes
 from routes import admin_pages as admin_pages_routes
 from routes import auth as auth_routes
+from routes import bookings as bookings_routes
 from routes import businesses as businesses_routes
 from routes import cabinet as cabinet_routes
 from routes import integrations as integrations_routes
@@ -224,6 +225,8 @@ app.include_router(messages_routes.router)  # webhook и диалоги (руч�
 app.include_router(leads_routes.router)  # этап 4
 app.include_router(admin_routes.router)  # этап 6: JSON API (раздел 11)
 app.include_router(admin_pages_routes.router)  # этап 6: страницы панели (раздел 15)
+# Вне ТЗ (§22): мастера, смены и записи клиентов
+app.include_router(bookings_routes.router)
 # --- Этап 5: кабинет бизнеса (страницы) ---
 app.include_router(cabinet_routes.router)
 

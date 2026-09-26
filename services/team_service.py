@@ -31,7 +31,7 @@ from models import (
     User,
     utcnow,
 )
-from services import audit_service
+from services import audit_service, master_service
 from services.access_service import BusinessContext
 from services.auth_service import get_user_by_email
 
@@ -86,6 +86,8 @@ def update_member_role(
     previous = member.role
     member.role = role
     user = db.get_one(User, user_id)
+    if role is MemberRole.MASTER:
+        master_service.ensure_master_for_member(db, ctx.business_id, user)
     audit_service.log_event(
         db,
         event_type=audit_service.EventType.BUSINESS_MEMBER_UPDATED,
@@ -254,6 +256,9 @@ def accept_invitation(db: Session, user: User, token: str) -> tuple[BusinessMemb
             business_id=invitation.business_id, user_id=user.id, role=invitation.role
         )
         db.add(member)
+    if member.role is MemberRole.MASTER:
+        # Мастер сразу получает профиль: расписание и записи (вне ТЗ, §22).
+        master_service.ensure_master_for_member(db, invitation.business_id, user)
     invitation.accepted_at = utcnow()
     invitation.accepted_by = user.id
     audit_service.log_event(
