@@ -35,6 +35,7 @@ from cabinet_labels import TONE_HINTS
 from config import settings
 from database import get_db
 from models import (
+    BookingStatus,
     Business,
     BusinessMember,
     Channel,
@@ -49,11 +50,14 @@ from models import (
 )
 from services import (
     analytics_service,
+    booking_service,
     business_service,
     integration_service,
     lead_service,
+    master_service,
     message_service,
     onboarding_service,
+    schedule_service,
     subscription_service,
     team_service,
 )
@@ -69,6 +73,8 @@ router = APIRouter(include_in_schema=False)
 
 ANY_MEMBER = (MemberRole.OWNER, MemberRole.MANAGER)
 OWNER_ONLY = (MemberRole.OWNER,)
+# Вне ТЗ (§22): мастер видит только «Моё расписание», «Мои записи», «Уведомления».
+ALL_MEMBERS = (MemberRole.OWNER, MemberRole.MANAGER, MemberRole.MASTER)
 
 PAGE_SIZE = 30
 LEADS_PAGE_SIZE = 50
@@ -146,10 +152,24 @@ def _int_or_none(value: str | None) -> int | None:
     return parsed if parsed and parsed > 0 else None
 
 
-def _nav(is_owner: bool) -> list[dict]:
+def _nav(is_owner: bool, is_master: bool = False) -> list[dict]:
+    if is_master:
+        items = [
+            ("schedule", "Моё расписание", "/schedule"),
+            ("bookings", "Мои записи", "/bookings"),
+            ("notify", "Уведомления", "/notify"),
+        ]
+        return [
+            {
+                "title": "Мастер",
+                "items": [{"key": k, "label": lbl, "path": p} for k, lbl, p in items],
+            }
+        ]
     work = [
         ("dashboard", "Обзор", ""),
         ("messages", "Сообщения", "/messages"),
+        ("bookings", "Записи", "/bookings"),
+        ("schedule", "Расписание", "/schedule"),
         ("leads", "Лиды", "/leads"),
         ("customers", "Клиенты", "/customers"),
     ]
@@ -191,6 +211,7 @@ def render(
 ) -> HTMLResponse:
     """Страница кабинета с общей рамкой: меню по роли, счётчик «требует внимания»."""
     is_owner = ctx.is_platform_admin or ctx.role is MemberRole.OWNER
+    is_master = not ctx.is_platform_admin and ctx.role is MemberRole.MASTER
     context = {
         "user": ctx.user,
         "business": ctx.business,
@@ -198,7 +219,8 @@ def render(
         "role": "ADMIN" if ctx.is_platform_admin else (ctx.role.value if ctx.role else ""),
         "is_owner": is_owner,
         "memberships": _memberships(db, ctx.user),
-        "nav": _nav(is_owner),
+        "nav": _nav(is_owner, is_master),
+        "is_master": is_master,
         "active": active,
         "title": title,
         "attention_count": analytics_service.attention_count(db, ctx.business_id),
@@ -294,9 +316,12 @@ def cabinet_home(request: Request, user: User = Depends(page_user), db: Session 
 @router.get("/cabinet/{business_id}")
 def dashboard(
     request: Request,
-    ctx: BusinessContext = Depends(page_business(*ANY_MEMBER)),
+    ctx: BusinessContext = Depends(page_business(*ALL_MEMBERS)),
     db: Session = Depends(get_db),
 ):
+    if not ctx.is_platform_admin and ctx.role is MemberRole.MASTER:
+        # У мастера нет обзора: его «главная» — собственное расписание.
+        return RedirectResponse(f"/cabinet/{ctx.business_id}/schedule", status_code=303)
     summary = analytics_service.dashboard_summary(db, ctx)
     queue = message_service.list_conversations(
         db, ctx, status=ConversationStatus.NEEDS_ATTENTION, limit=8
@@ -586,6 +611,7 @@ def team_page(
     db: Session = Depends(get_db),
 ):
     members = business_service.list_members(db, ctx)
+    masters = master_service.list_masters(db, ctx)
     return render(
         request,
         db,
@@ -595,8 +621,166 @@ def team_page(
         "Сотрудники",
         members=members,
         invitations=team_service.list_invitations(db, ctx),
+        masters=masters,
+        master_services=master_service.service_ids_by_master(db, [m.id for m in masters]),
+        services=business_service.list_services(db, ctx),
         owners_count=sum(1 for m, _u in members if m.role is MemberRole.OWNER),
         invitation_ttl_days=settings.invitation_ttl_days,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Расписание мастеров и записи (вне ТЗ, §22)
+# --------------------------------------------------------------------------- #
+WEEKDAYS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+RU_TIMEZONES = (
+    ("Europe/Kaliningrad", "Калининград (МСК−1)"),
+    ("Europe/Moscow", "Москва (МСК)"),
+    ("Europe/Samara", "Самара (МСК+1)"),
+    ("Asia/Yekaterinburg", "Екатеринбург (МСК+2)"),
+    ("Asia/Omsk", "Омск (МСК+3)"),
+    ("Asia/Novosibirsk", "Новосибирск (МСК+4)"),
+    ("Asia/Krasnoyarsk", "Красноярск (МСК+4)"),
+    ("Asia/Irkutsk", "Иркутск (МСК+5)"),
+    ("Asia/Yakutsk", "Якутск (МСК+6)"),
+    ("Asia/Vladivostok", "Владивосток (МСК+7)"),
+    ("Asia/Magadan", "Магадан (МСК+8)"),
+    ("Asia/Kamchatka", "Камчатка (МСК+9)"),
+)
+
+
+def _local(value: datetime, tz) -> datetime:
+    return (value if value.tzinfo else value.replace(tzinfo=UTC)).astimezone(tz)
+
+
+@router.get("/cabinet/{business_id}/schedule")
+def schedule_page(
+    request: Request,
+    week: str | None = Query(default=None),
+    ctx: BusinessContext = Depends(page_business(*ALL_MEMBERS)),
+    db: Session = Depends(get_db),
+):
+    tz = schedule_service.business_tz(ctx.business)
+    today = datetime.now(tz).date()
+    start = schedule_service.week_start(_parse_day(week) or today)
+    days = [start + timedelta(days=i) for i in range(7)]
+    masters = master_service.list_masters(db, ctx)
+    shifts = schedule_service.list_shifts(db, ctx, days[0], days[-1])
+    bookings = booking_service.list_bookings(
+        db, ctx, day_from=days[0], day_to=days[-1], statuses=booking_service.ACTIVE
+    )
+    service_names = {s.id: s.name for s in business_service.list_services(db, ctx)}
+    grid: dict = {(m.id, d): {"shifts": [], "bookings": []} for m in masters for d in days}
+    for shift in shifts:
+        if (shift.master_id, shift.day) in grid:
+            grid[(shift.master_id, shift.day)]["shifts"].append(shift)
+    for booking in bookings:
+        local = _local(booking.starts_at, tz)
+        key = (booking.master_id, local.date())
+        if key in grid:
+            grid[key]["bookings"].append(
+                {
+                    "time": local.strftime("%H:%M"),
+                    "service": service_names.get(booking.service_id or 0, "Услуга"),
+                    "client": booking.client_name,
+                    "pending": booking.status is BookingStatus.PENDING,
+                }
+            )
+    editable = [m for m in masters if master_service.can_edit_schedule(ctx, m)]
+    is_master = not ctx.is_platform_admin and ctx.role is MemberRole.MASTER
+    return render(
+        request,
+        db,
+        ctx,
+        "schedule.html",
+        "schedule",
+        "Моё расписание" if is_master else "Расписание",
+        days=[(d, WEEKDAYS[d.weekday()]) for d in days],
+        today=today,
+        masters=masters,
+        grid=grid,
+        editable={m.id for m in editable},
+        editable_masters=editable,
+        prev_week=(start - timedelta(days=7)).isoformat(),
+        next_week=(start + timedelta(days=7)).isoformat(),
+        this_week=schedule_service.week_start(today).isoformat(),
+        tz_name=ctx.business.timezone,
+    )
+
+
+@router.get("/cabinet/{business_id}/bookings")
+def bookings_page(
+    request: Request,
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
+    status_filter: str | None = Query(default=None, alias="status"),
+    master: str | None = Query(default=None),
+    slot_service: str | None = Query(default=None),
+    slot_day: str | None = Query(default=None),
+    ctx: BusinessContext = Depends(page_business(*ALL_MEMBERS)),
+    db: Session = Depends(get_db),
+):
+    tz = schedule_service.business_tz(ctx.business)
+    today = datetime.now(tz).date()
+    start = _parse_day(date_from) or today
+    end = _parse_day(date_to) or start + timedelta(days=13)
+    if end < start or (end - start).days > schedule_service.MAX_RANGE_DAYS:
+        end = start + timedelta(days=13)
+    booking_status = _enum_or_none(BookingStatus, status_filter)
+    master_id = _int_or_none(master)
+    rows = booking_service.list_bookings(
+        db,
+        ctx,
+        day_from=start,
+        day_to=end,
+        master_id=master_id,
+        statuses=(booking_status,) if booking_status else None,
+    )
+    masters = master_service.list_masters(db, ctx)
+    master_names = {m.id: m.display_name for m in masters}
+    services = business_service.list_services(db, ctx)
+    service_names = {s.id: s.name for s in services}
+    is_staff = master_service.is_staff(ctx)
+    items = [
+        {
+            "booking": b,
+            "local": _local(b.starts_at, tz),
+            "end": _local(b.ends_at, tz),
+            "master": master_names.get(b.master_id, "—"),
+            "service": service_names.get(b.service_id or 0, "—"),
+        }
+        for b in rows
+    ]
+
+    slots: list = []
+    slot_service_id = _int_or_none(slot_service)
+    chosen_day = _parse_day(slot_day)
+    if is_staff and slot_service_id and chosen_day:
+        chosen = next((s for s in services if s.id == slot_service_id), None)
+        if chosen is not None:
+            slots = booking_service.free_slots(
+                db, ctx.business, chosen, day_from=chosen_day, day_to=chosen_day, limit=60
+            )
+    return render(
+        request,
+        db,
+        ctx,
+        "bookings.html",
+        "bookings",
+        "Записи" if is_staff else "Мои записи",
+        items=items,
+        masters=masters,
+        services=[s for s in services if s.active],
+        is_staff=is_staff,
+        date_from=start.isoformat(),
+        date_to=end.isoformat(),
+        status_filter=booking_status.value if booking_status else "",
+        master_filter=master_id,
+        statuses=list(BookingStatus),
+        slots=slots,
+        slot_service=slot_service_id,
+        slot_day=chosen_day.isoformat() if chosen_day else today.isoformat(),
+        tz_name=ctx.business.timezone,
     )
 
 
@@ -629,6 +813,8 @@ def settings_page(
             for plan in (SubscriptionPlan.START, SubscriptionPlan.PRO)
         ],
         billing_contact=settings.billing_contact,
+        timezones=RU_TIMEZONES,
+        masters_count=len(master_service.list_masters(db, ctx, only_active=True)),
     )
 
 

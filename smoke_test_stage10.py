@@ -636,6 +636,102 @@ with TestClient(app) as c:
     )
     c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"timezone": "Europe/Moscow"})
 
+    # ----------------------------------------------------------------------- #
+    print("\n=== 6. Кабинет: расписание, записи, меню мастера ===")
+
+    def page_as(email: str, path: str) -> httpx.Response:
+        c.cookies.clear()
+        c.post("/auth/login", json={"email": email, "password": PWD})
+        response = c.get(path, follow_redirects=False)
+        c.cookies.clear()
+        return response
+
+    r = page_as("master_ivan@example.com", f"/cabinet/{biz_a}")
+    check(
+        "мастера с обзора перенаправляет в его расписание",
+        r.status_code == 303 and r.headers["location"].endswith(f"/cabinet/{biz_a}/schedule"),
+    )
+    week = f"/cabinet/{biz_a}/schedule?week={D1.isoformat()}"
+    html = page_as("master_ivan@example.com", week).text
+    check(
+        "меню мастера: только расписание, записи, уведомления",
+        "Моё расписание" in html
+        and "Мои записи" in html
+        and "/messages" not in html
+        and "/leads" not in html,
+    )
+    check(
+        "мастер видит свою строку и форму смены",
+        "Иван" in html and "Пётр" not in html and "Добавить смену" in html,
+    )
+    check("в расписании видна запись мастера", "Сергей" in html)
+    for path in (
+        "messages",
+        "leads",
+        "customers",
+        "services",
+        "settings",
+        "team",
+        "analytics",
+        "ai",
+    ):
+        status = page_as("master_ivan@example.com", f"/cabinet/{biz_a}/{path}").status_code
+        if status != 403:
+            check(f"мастеру закрыт раздел «{path}»", False, str(status))
+            break
+    else:
+        check("мастеру закрыты все прежние разделы кабинета (403)", True)
+    html = page_as("manager_a@example.com", week).text
+    check(
+        "менеджер видит всех мастеров без формы смены",
+        "Иван" in html
+        and "Пётр" in html
+        and "Добавить смену" not in html
+        and "shift-remove" not in html,
+    )
+    html = page_as("owner_a@example.com", week).text
+    check(
+        "владелец видит кнопки удаления смен и форму",
+        "shift-remove" in html and "Добавить смену" in html,
+    )
+    html = page_as(
+        "manager_a@example.com",
+        f"/cabinet/{biz_a}/bookings?from={D1.isoformat()}&slot_service={cut}&slot_day={D1.isoformat()}",
+    ).text
+    check(
+        "страница записей: список, свободное время, форма записи",
+        "Сергей" in html
+        and "Свободное время" in html
+        and "11:00" in html
+        and "Записать клиента" in html,
+    )
+    html = page_as(
+        "master_ivan@example.com", f"/cabinet/{biz_a}/bookings?from={D1.isoformat()}"
+    ).text
+    check(
+        "мастер видит свои записи без формы записи и отмены",
+        "Сергей" in html and "Записать клиента" not in html and "/cancel" not in html,
+    )
+    check(
+        "чужой владелец: расписание компании A — 404",
+        page_as("owner_b@example.com", week).status_code == 404,
+    )
+    evil = "<script>alert(1)</script>Злодей"
+    c.post(f"/businesses/{biz_a}/masters", headers=H["owner_a"], json={"display_name": evil})
+    html = (
+        page_as("owner_a@example.com", week).text
+        + page_as("owner_a@example.com", f"/cabinet/{biz_a}/team").text
+    )
+    check(
+        "имя мастера экранируется (XSS)",
+        "<script>alert(1)</script>" not in html and "&lt;script&gt;" in html,
+    )
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/settings").text
+    check(
+        "в настройках блок «Запись к мастерам»",
+        "Запись к мастерам" in html and "Asia/Yekaterinburg" in html,
+    )
+
 with contextlib.suppress(PermissionError):
     DB.unlink(missing_ok=True)
 

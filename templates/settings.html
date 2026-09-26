@@ -123,6 +123,35 @@
 
   <section class="sheet">
     <div class="sheet-head">
+      <h2>Запись к мастерам</h2>
+      {% if business.booking_enabled %}<span class="tag tag--ok">Ассистент записывает</span>{% else %}<span class="tag">Выключено</span>{% endif %}
+    </div>
+    <form class="sheet-body" data-api-form data-method="PUT" data-url="/businesses/{{ business_id }}" data-success="reload" novalidate>
+      <p class="muted">Ассистент предлагает клиентам свободное время из расписания мастеров и ставит бронь; вы или мастер подтверждаете её в разделе «Записи».{% if not masters_count %} Сначала добавьте мастеров и их смены.{% endif %}</p>
+        <div class="field field--gap">
+          <label for="bk-tz">Часовой пояс расписания</label>
+          <select class="select" id="bk-tz" name="timezone">
+            {% for value, title in timezones %}<option value="{{ value }}"{% if business.timezone == value %} selected{% endif %}>{{ title }}</option>{% endfor %}
+            {% if business.timezone not in timezones|map('first')|list %}<option value="{{ business.timezone }}" selected>{{ business.timezone }}</option>{% endif %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="bk-step">Шаг записи</label>
+          <select class="select" id="bk-step" name="slot_step_minutes" data-type="int">
+            {% for step in (15, 30, 60) %}<option value="{{ step }}"{% if business.slot_step_minutes == step %} selected{% endif %}>каждые {{ step }} мин</option>{% endfor %}
+          </select>
+        </div>
+      
+      <label class="check check--block"><input type="checkbox" name="booking_enabled"{% if business.booking_enabled %} checked{% endif %}{% if not masters_count and not business.booking_enabled %} disabled{% endif %}> Ассистент записывает клиентов по расписанию</label>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Сохранить</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head">
       <h2>Тариф</h2>
       {% if subscription %}
         {% if not subscription.active %}<span class="tag tag--attention">Срок истёк</span>

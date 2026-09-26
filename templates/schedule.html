@@ -1,0 +1,105 @@
+{% extends "cabinet_base.html" %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    <p>{% if is_master %}Отметьте дни и часы, когда вы принимаете клиентов, — ассистент будет записывать только в это время.{% elif editable %}Рабочие смены мастеров по дням. Ассистент предлагает клиентам только свободное время внутри смен.{% else %}Рабочие смены мастеров и записи на неделю. Менять смены могут владелец и сами мастера.{% endif %}</p>
+  </div>
+  <nav class="actions" aria-label="Неделя">
+    <a class="btn btn--small" href="?week={{ prev_week }}">← Неделя</a>
+    <a class="btn btn--small" href="?week={{ this_week }}">Сегодня</a>
+    <a class="btn btn--small" href="?week={{ next_week }}">Неделя →</a>
+  </nav>
+</header>
+
+<section class="sheet">
+  <div class="sheet-head"><h2>{{ days[0][0].strftime('%d.%m') }} — {{ days[-1][0].strftime('%d.%m.%Y') }}</h2><span class="tag">Время: {{ tz_name }}</span></div>
+  {% if masters %}
+    <div class="table-wrap">
+      <table class="table schedule">
+        <thead>
+          <tr>
+            <th class="schedule-master">Мастер</th>
+            {% for day, weekday in days %}
+              <th class="schedule-day{% if day == today %} is-today{% endif %}">{{ weekday }}<small>{{ day.strftime('%d.%m') }}</small></th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for master in masters %}
+            <tr>
+              <th class="schedule-master" scope="row">{{ master.display_name }}{% if not master.active %}<small>не принимает</small>{% endif %}</th>
+              {% for day, weekday in days %}
+                {% set cell = grid[(master.id, day)] %}
+                <td class="schedule-cell{% if day == today %} is-today{% endif %}">
+                  {% for shift in cell.shifts %}
+                    <div class="shift">
+                      <span>{{ shift.start_time.strftime('%H:%M') }}–{{ shift.end_time.strftime('%H:%M') }}</span>
+                      {% if master.id in editable %}
+                        <button class="shift-remove" type="button" data-api-click data-url="/shifts/{{ shift.id }}" data-method="DELETE"
+                                data-confirm="Удалить смену {{ day.strftime('%d.%m') }} {{ shift.start_time.strftime('%H:%M') }}–{{ shift.end_time.strftime('%H:%M') }}?" data-confirm-ok="Удалить" data-success="reload"
+                                aria-label="Удалить смену {{ shift.start_time.strftime('%H:%M') }}–{{ shift.end_time.strftime('%H:%M') }}">×</button>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                  {% for b in cell.bookings %}
+                    <div class="slot-booking{% if b.pending %} is-pending{% endif %}" title="{{ b.service }} · {{ b.client }}">
+                      <strong>{{ b.time }}</strong> {{ b.service }}<small>{{ b.client }}{% if b.pending %} · ждёт подтверждения{% endif %}</small>
+                    </div>
+                  {% endfor %}
+                  {% if not cell.shifts and not cell.bookings %}<span class="muted">—</span>{% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="sheet-body">
+      {% if is_master %}
+        <p class="muted">Профиль мастера ещё не создан — обратитесь к владельцу компании.</p>
+      {% else %}
+        <p class="muted">Мастеров пока нет. Пригласите сотрудника с ролью «Мастер» или добавьте мастера без аккаунта в разделе «Сотрудники».</p>
+      {% endif %}
+    </div>
+  {% endif %}
+</section>
+
+{% if editable_masters %}
+  <section class="sheet">
+    <div class="sheet-head"><h2>Добавить смену</h2></div>
+    <form class="sheet-body" data-api-form data-method="POST" data-url="/masters/{master_id}/shifts" data-success="reload" novalidate>
+      <div class="form-row form-row--4">
+        {% if editable_masters|length > 1 %}
+          <div class="field">
+            <label for="shift-master">Мастер</label>
+            <select class="select" id="shift-master" name="master_id" required>
+              {% for m in editable_masters %}<option value="{{ m.id }}">{{ m.display_name }}</option>{% endfor %}
+            </select>
+          </div>
+        {% else %}
+          <input type="hidden" name="master_id" value="{{ editable_masters[0].id }}">
+        {% endif %}
+        <div class="field">
+          <label for="shift-day">Дата</label>
+          <input class="input" id="shift-day" name="day" type="date" required value="{{ today.isoformat() }}">
+        </div>
+        <div class="field">
+          <label for="shift-start">С</label>
+          <input class="input" id="shift-start" name="start_time" type="time" required value="10:00" step="900">
+        </div>
+        <div class="field">
+          <label for="shift-end">До</label>
+          <input class="input" id="shift-end" name="end_time" type="time" required value="20:00" step="900">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Добавить смену</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+      <p class="hint">В один день можно добавить несколько смен — например, до и после перерыва.</p>
+    </form>
+  </section>
+{% endif %}
+{% endblock %}

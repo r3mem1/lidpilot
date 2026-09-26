@@ -5,7 +5,7 @@
 <header class="page-head">
   <div>
     <h1>Сотрудники</h1>
-    <p>Владелец управляет компанией целиком, менеджер отвечает клиентам и работает с лидами — без настроек и аналитики.</p>
+    <p>Владелец управляет компанией целиком, менеджер отвечает клиентам и ведёт записи — без настроек и аналитики, мастер видит только своё расписание и свои записи.</p>
   </div>
   <div class="actions"><button class="btn btn--primary" type="button" data-invite-new>Пригласить сотрудника</button></div>
 </header>
@@ -25,7 +25,7 @@
             </td>
             <td>
               <select class="select select--small" data-api-change data-url="/businesses/{{ business_id }}/members/{{ person.id }}" data-method="PATCH" data-field="role" data-success="reload" aria-label="Роль {{ person.email }}"{% if is_last_owner %} disabled title="В компании должен остаться хотя бы один владелец"{% endif %}>
-                {% for key in ['OWNER', 'MANAGER'] %}<option value="{{ key }}"{% if member.role.value == key %} selected{% endif %}>{{ label('role', key) }}</option>{% endfor %}
+                {% for key in ['OWNER', 'MANAGER', 'MASTER'] %}<option value="{{ key }}"{% if member.role.value == key %} selected{% endif %}>{{ label('role', key) }}</option>{% endfor %}
               </select>
             </td>
             <td class="muted">{{ m.time(member.created_at) }}</td>
@@ -65,6 +65,50 @@
   {% endif %}
 </section>
 
+<section class="sheet">
+  <div class="sheet-head"><h2>Мастера</h2><span class="tag">{{ masters|length }}</span></div>
+  <div class="sheet-body">
+    <p class="muted">К мастерам записываются клиенты. Отметьте услуги, которые делает мастер: ассистент предложит клиенту только подходящих. Ничего не отмечено — мастер делает все услуги. Мастер с ролью «Мастер» сам ведёт своё расписание; без аккаунта — расписание ведёте вы.</p>
+  </div>
+  {% for master in masters %}
+    <form class="sheet-body master-row" data-api-form data-method="PUT" data-url="/masters/{{ master.id }}/services" data-success="message:Услуги мастера сохранены" novalidate>
+      <div class="master-head">
+        <strong>{{ master.display_name }}</strong>
+        <span class="tag">{{ 'аккаунт мастера' if master.user_id else 'без аккаунта' }}</span>
+        {% if not master.active %}<span class="tag tag--attention">не принимает</span>{% endif %}
+        <span class="row-actions">
+          <button class="btn btn--small" type="button" data-api-click data-url="/masters/{{ master.id }}" data-method="PUT"
+                  data-body='{"active": {{ 'false' if master.active else 'true' }}}' data-success="reload">{{ 'Не принимает записи' if master.active else 'Принимает записи' }}</button>
+          <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/masters/{{ master.id }}" data-method="DELETE"
+                  data-confirm="Удалить мастера «{{ master.display_name }}» вместе с его сменами?" data-confirm-ok="Удалить" data-success="reload">Удалить</button>
+        </span>
+      </div>
+      {% set chosen = master_services.get(master.id, []) %}
+      <fieldset class="checks">
+        <legend class="visually-hidden">Услуги мастера {{ master.display_name }}</legend>
+        {% for service in services %}
+          <label class="check"><input type="checkbox" name="service_ids" value="{{ service.id }}" data-list{% if service.id in chosen %} checked{% endif %}> {{ service.name }}</label>
+        {% else %}
+          <span class="muted">Сначала добавьте услуги в прайс.</span>
+        {% endfor %}
+      </fieldset>
+      {% if services %}<div class="form-actions"><button class="btn btn--small" type="submit">Сохранить услуги</button><span class="form-status" data-status role="status"></span></div>{% endif %}
+    </form>
+  {% endfor %}
+  <form class="sheet-body" data-api-form data-method="POST" data-url="/businesses/{{ business_id }}/masters" data-success="reload" novalidate>
+    <div class="form-row">
+      <div class="field">
+        <label for="new-master">Мастер без аккаунта</label>
+        <input class="input" id="new-master" name="display_name" maxlength="120" required placeholder="Имя мастера">
+      </div>
+      <div class="field field--end">
+        <button class="btn" type="submit">Добавить мастера</button>
+      </div>
+    </div>
+    <span class="form-status" data-status role="status"></span>
+  </form>
+</section>
+
 <dialog class="dialog" id="invite-dialog" aria-labelledby="invite-title">
   <form data-invite-form data-url="/businesses/{{ business_id }}/invitations" novalidate>
     <h2 id="invite-title">Пригласить сотрудника</h2>
@@ -78,6 +122,7 @@
         <label for="inv-role">Роль</label>
         <select class="select" id="inv-role" name="role">
           <option value="MANAGER">Менеджер</option>
+          <option value="MASTER">Мастер — только своё расписание и записи</option>
           <option value="OWNER">Владелец</option>
         </select>
       </div>

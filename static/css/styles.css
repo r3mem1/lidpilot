@@ -488,3 +488,39 @@ td.pole-cell .pole { min-height: 34px; height: 100%; }
 fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 /* Этап 9: пошаговая инструкция подключения канала. */
 .howto { margin: 0 0 14px; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+
+/* ---------- Расписание мастеров и записи (вне ТЗ, §22) ---------- */
+.form-row--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.form-row--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.field--end { align-self: end; }
+.form-row + .form-actions, .field + .form-actions { margin-top: 16px; }
+.row-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.table.schedule { table-layout: fixed; min-width: 860px; }
+.table.schedule th, .table.schedule td { vertical-align: top; padding: 10px; }
+.schedule-master { width: 150px; text-align: left; }
+.schedule-master small, .schedule-day small { display: block; font-weight: 400; color: var(--ink-3); font-size: 12px; }
+.schedule-day { text-align: left; }
+.schedule .is-today { background: var(--navy-soft); }
+.shift { display: flex; align-items: center; justify-content: space-between; gap: 2px; padding: 3px 5px; white-space: nowrap; margin-bottom: 4px; border-radius: var(--radius-s); background: var(--sage-soft); color: var(--sage-ink); font-size: 12px; font-weight: 500; }
+.shift-remove { border: 0; background: none; color: inherit; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; opacity: 0.7; }
+.shift-remove:hover, .shift-remove:focus-visible { opacity: 1; }
+.slot-booking { padding: 4px 6px; margin-bottom: 4px; border-left: 3px solid var(--navy); background: var(--sheet-2); border-radius: 0 var(--radius-s) var(--radius-s) 0; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+.slot-booking small { display: block; color: var(--ink-3); }
+.slot-booking.is-pending { border-left-color: var(--amber); }
+.slot-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; font-size: 14px; }
+.slot-list li { padding: 6px 10px; border: 1px solid var(--line-2); border-radius: var(--radius-s); }
+@media (max-width: 720px) {
+  .form-row--3, .form-row--4 { grid-template-columns: minmax(0, 1fr); }
+}
+.master-row + .master-row, .master-row { border-top: 1px solid var(--line-2); }
+.master-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 10px; }
+.master-head .row-actions { margin-left: auto; }
+.checks { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.check--block { display: flex; margin-top: 14px; }
+.form-row + .form-row { margin-top: 14px; }
+@media (max-width: 720px) {
+  .schedule-master { width: 84px; }
+  .table.schedule { min-width: 720px; }
+}
+.field--gap { margin-top: 14px; }

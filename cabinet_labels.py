@@ -26,6 +26,9 @@ LABELS: dict[str, dict[str, str]] = {
     },
     # Почему диалог требует внимания менеджера (раздел 6.7)
     "attention": {
+        "BOOKING_PENDING": "Бронь ждёт подтверждения",
+        "BOOKING_REJECTED": "Бронь отклонена — предложите другое время",
+        "BOOKING_CANCELLED": "Запись отменена",
         "HOT_LEAD_CONFIRMATION": "Запись: нужно подтвердить время",
         "COMPLAINT": "Жалоба клиента",
         "MISSING_DATA": "Не хватило данных для ответа",
@@ -44,7 +47,19 @@ LABELS: dict[str, dict[str, str]] = {
     "delivery": {"PENDING": "Отправляется", "SENT": "Доставлено", "FAILED": "Не доставлено"},
     "channel": {"TELEGRAM": "Telegram", "VK": "VK"},
     "sender": {"CUSTOMER": "Клиент", "AI": "AI-ассистент", "MANAGER": "Менеджер"},
-    "role": {"OWNER": "Владелец", "MANAGER": "Менеджер", "ADMIN": "Администратор"},
+    "role": {
+        "OWNER": "Владелец",
+        "MANAGER": "Менеджер",
+        "MASTER": "Мастер",
+        "ADMIN": "Администратор",
+    },
+    "booking_status": {
+        "PENDING": "Ждёт подтверждения",
+        "CONFIRMED": "Подтверждена",
+        "REJECTED": "Отклонена",
+        "CANCELLED": "Отменена",
+    },
+    "booking_source": {"AI": "Ассистент", "STAFF": "Сотрудник"},
     "tone": {"FRIENDLY": "Дружелюбный", "FORMAL": "Официальный", "BRIEF": "Краткий"},
     "business_status": {
         "TRIAL": "Пробный период",

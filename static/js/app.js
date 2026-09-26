@@ -108,6 +108,12 @@
     var data = {};
     Array.prototype.forEach.call(form.elements, function (element) {
       if (!element.name || element.disabled) return;
+      /* Группа галочек data-list → массив отмеченных значений (целые числа). */
+      if (element.type === "checkbox" && element.dataset.list !== undefined) {
+        if (!data[element.name]) data[element.name] = [];
+        if (element.checked) data[element.name].push(parseInt(element.value, 10));
+        return;
+      }
       if (element.type === "radio" && !element.checked) return;
       if (element.type === "submit" || element.type === "button") return;
       var value = convert(element);
@@ -160,7 +166,13 @@
         return api("POST", "/auth/login", body);
       });
     } else {
-      request = api(form.dataset.method || "POST", form.dataset.url, body);
+      /* data-url="/masters/{master_id}/shifts": поле формы подставляется в адрес. */
+      var url = (form.dataset.url || "").replace(/\{(\w+)\}/g, function (_, key) {
+        var value = body[key];
+        delete body[key];
+        return encodeURIComponent(value == null ? "" : value);
+      });
+      request = api(form.dataset.method || "POST", url, body);
     }
     request.then(function (res) {
       setBusy(button, false);

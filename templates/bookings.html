@@ -1,0 +1,140 @@
+{% extends "cabinet_base.html" %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    <p>{% if is_staff %}Записи клиентов к мастерам. Брони ассистента ждут подтверждения — клиент получит сообщение, как только вы подтвердите или отклоните.{% else %}Клиенты, записанные к вам. Бронь от ассистента можно подтвердить или отклонить.{% endif %}</p>
+  </div>
+  <form class="actions" method="get" action="/cabinet/{{ business_id }}/bookings">
+    <label class="visually-hidden" for="bf-from">С</label>
+    <input class="input input--small" id="bf-from" name="from" type="date" value="{{ date_from }}">
+    <label class="visually-hidden" for="bf-to">По</label>
+    <input class="input input--small" id="bf-to" name="to" type="date" value="{{ date_to }}">
+    <label class="visually-hidden" for="bf-status">Статус</label>
+    <select class="select select--small" id="bf-status" name="status">
+      <option value="">Все статусы</option>
+      {% for st in statuses %}<option value="{{ st.value }}"{% if status_filter == st.value %} selected{% endif %}>{{ label('booking_status', st) }}</option>{% endfor %}
+    </select>
+    {% if is_staff and masters|length > 1 %}
+      <label class="visually-hidden" for="bf-master">Мастер</label>
+      <select class="select select--small" id="bf-master" name="master">
+        <option value="">Все мастера</option>
+        {% for m in masters %}<option value="{{ m.id }}"{% if master_filter == m.id %} selected{% endif %}>{{ m.display_name }}</option>{% endfor %}
+      </select>
+    {% endif %}
+    <button class="btn btn--small" type="submit">Показать</button>
+  </form>
+</header>
+
+<section class="sheet">
+  {% if items %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Когда</th>{% if is_staff %}<th>Мастер</th>{% endif %}<th class="grow">Услуга и клиент</th><th>Статус</th><th class="num">Действия</th></tr></thead>
+        <tbody>
+          {% for it in items %}
+            {% set b = it.booking %}
+            <tr>
+              <td><strong>{{ it.local.strftime('%d.%m') }}</strong> {{ it.local.strftime('%H:%M') }}–{{ it.end.strftime('%H:%M') }}</td>
+              {% if is_staff %}<td>{{ it.master }}</td>{% endif %}
+              <td>
+                <span class="cell-title">{{ it.service }}</span>
+                <div class="cell-sub">{{ b.client_name }}{% if b.source.value == 'AI' %} · бронь ассистента{% endif %}{% if is_staff and b.conversation_id %} · <a href="/cabinet/{{ business_id }}/messages?c={{ b.conversation_id }}">диалог</a>{% endif %}</div>
+                {% if b.comment %}<div class="cell-sub">{{ b.comment }}</div>{% endif %}
+              </td>
+              <td><span class="tag{% if b.status.value == 'PENDING' %} tag--warm{% elif b.status.value == 'CONFIRMED' %} tag--ok{% endif %}">{{ label('booking_status', b.status) }}</span></td>
+              <td class="num">
+                <div class="row-actions">
+                  {% if b.status.value == 'PENDING' %}
+                    <button class="btn btn--small btn--primary" type="button" data-api-click data-url="/bookings/{{ b.id }}/confirm" data-success="reload">Подтвердить</button>
+                    <button class="btn btn--small" type="button" data-api-click data-url="/bookings/{{ b.id }}/reject" data-confirm="Отклонить бронь {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение, диалог перейдёт в «Требует внимания»." data-confirm-ok="Отклонить" data-success="reload">Отклонить</button>
+                  {% endif %}
+                  {% if is_staff and b.status.value in ('PENDING', 'CONFIRMED') %}
+                    <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/bookings/{{ b.id }}/cancel" data-confirm="Отменить запись {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение." data-confirm-ok="Отменить запись" data-success="reload">Отменить</button>
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="sheet-body"><p class="muted">За выбранный период записей нет.</p></div>
+  {% endif %}
+</section>
+
+{% if is_staff %}
+  <div class="grid grid--2">
+    <section class="sheet">
+      <div class="sheet-head"><h2>Свободное время</h2><span class="tag">{{ tz_name }}</span></div>
+      <div class="sheet-body">
+        <form class="form-row form-row--3" method="get" action="/cabinet/{{ business_id }}/bookings">
+          <div class="field">
+            <label for="slot-service">Услуга</label>
+            <select class="select" id="slot-service" name="slot_service" required>
+              {% for s in services %}<option value="{{ s.id }}"{% if slot_service == s.id %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="slot-day">Дата</label>
+            <input class="input" id="slot-day" name="slot_day" type="date" value="{{ slot_day }}" required>
+          </div>
+          <div class="field field--end"><button class="btn" type="submit">Найти окна</button></div>
+        </form>
+        {% if slot_service %}
+          {% if slots %}
+            <ul class="slot-list">
+              {% for s in slots %}<li><strong>{{ s.local_start.strftime('%H:%M') }}</strong> {{ s.master_name }}</li>{% endfor %}
+            </ul>
+          {% else %}
+            <p class="muted">В этот день свободного времени нет.</p>
+          {% endif %}
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="sheet">
+      <div class="sheet-head"><h2>Записать клиента</h2></div>
+      <form class="sheet-body" data-api-form data-method="POST" data-url="/businesses/{{ business_id }}/bookings" data-success="reload" novalidate>
+        <div class="form-row">
+          <div class="field">
+            <label for="nb-master">Мастер</label>
+            <select class="select" id="nb-master" name="master_id" data-type="int" required>
+              {% for m in masters if m.active %}<option value="{{ m.id }}">{{ m.display_name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="nb-service">Услуга</label>
+            <select class="select" id="nb-service" name="service_id" data-type="int" required>
+              {% for s in services %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="nb-day">Дата</label>
+            <input class="input" id="nb-day" name="day" type="date" value="{{ slot_day }}" required>
+          </div>
+          <div class="field">
+            <label for="nb-time">Время</label>
+            <input class="input" id="nb-time" name="start_time" type="time" step="300" required>
+          </div>
+        </div>
+        <div class="field">
+          <label for="nb-client">Клиент</label>
+          <input class="input" id="nb-client" name="client_name" maxlength="255" required placeholder="Имя и телефон">
+        </div>
+        <div class="field">
+          <label for="nb-comment">Комментарий</label>
+          <input class="input" id="nb-comment" name="comment" maxlength="1000" data-empty="null">
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Записать</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      </form>
+    </section>
+  </div>
+{% endif %}
+{% endblock %}
