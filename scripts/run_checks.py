@@ -36,7 +36,7 @@ LINTERS: dict[str, list[str]] = {
         "-r",
         ".",
         "-x",
-        "./migrations,./smoke_test.py,./smoke_test_ai.py",
+        "./migrations,./smoke_test.py,./smoke_test_ai.py,./brag-output",
         "-q",
         "-f",
         "json",

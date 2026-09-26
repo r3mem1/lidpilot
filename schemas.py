@@ -281,6 +281,12 @@ class TelegramConnectRequest(BaseModel):
     bot_token: SecretStr
 
 
+class VkConnectRequest(BaseModel):
+    """Ключ доступа сообщества VK (этап 9). SecretStr — как у токена бота."""
+
+    access_token: SecretStr
+
+
 class IntegrationOut(BaseModel):
     id: int
     business_id: int

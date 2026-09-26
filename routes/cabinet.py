@@ -37,6 +37,7 @@ from database import get_db
 from models import (
     Business,
     BusinessMember,
+    Channel,
     Conversation,
     ConversationStatus,
     Customer,
@@ -610,6 +611,7 @@ def settings_page(
 ):
     integrations = integration_service.list_integrations(db, ctx)
     telegram = next((i for i in integrations if i.channel.value == "TELEGRAM"), None)
+    vk_integration = next((i for i in integrations if i.channel.value == "VK"), None)
     return render(
         request,
         db,
@@ -618,6 +620,8 @@ def settings_page(
         "settings",
         "Настройки",
         telegram=telegram,
+        vk=vk_integration,
+        vk_webhook_url=integration_service.webhook_url(Channel.VK),
         webhook_url=integration_service.webhook_url(),
         webhook_ready=bool((settings.public_base_url or "").lower().startswith("https://")),
         plans=[

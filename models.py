@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -292,6 +293,21 @@ class Subscription(Base):
     business: Mapped[Business] = relationship(back_populates="subscription")
 
 
+class RateLimitCounter(Base):
+    """Счётчик ограничения частоты запросов (раздел 16, этап 9).
+
+    Фиксированное окно в общей БД: лимит один на все воркеры и реплики.
+    key — «область:идентификатор» (например, auth:login:1.2.3.4),
+    window_start — начало окна в секундах Unix.
+    """
+
+    __tablename__ = "rate_limit_counters"
+
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    window_start: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 # --------------------------------------------------------------------------- #
 # system_logs (разделы 16, 17)
 # --------------------------------------------------------------------------- #
@@ -321,10 +337,13 @@ class SystemLog(Base):
 # Этап 3: каналы, клиенты, диалоги, сообщения (разделы 6.4, 10, 11, 18)
 # --------------------------------------------------------------------------- #
 class Channel(str, enum.Enum):
-    """Канал коммуникации. MVP — только Telegram (раздел 1); WhatsApp и другие
-    каналы добавляются значением enum + клиентом ChannelClient, без правок ядра."""
+    """Канал коммуникации. MVP — Telegram (раздел 1); этап 9 — VK (сообщения
+    сообщества). Новый канал = значение enum + модуль в integrations/ по
+    контракту integrations/base.py, без правок ядра. Колонки channel — VARCHAR
+    без CHECK, поэтому новое значение не требует миграции."""
 
     TELEGRAM = "TELEGRAM"
+    VK = "VK"
 
 
 class IntegrationStatus(str, enum.Enum):
@@ -420,6 +439,9 @@ class Integration(Base):
     webhook_secret_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     external_account_id: Mapped[str | None] = mapped_column(String(64))
     external_account_name: Mapped[str | None] = mapped_column(String(120))
+    # Этап 9: несекретные параметры канала (VK: код подтверждения и id сервера
+    # Callback API). Токены и секреты сюда не кладутся (раздел 16).
+    channel_settings: Mapped[dict | None] = mapped_column(JSONType)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow

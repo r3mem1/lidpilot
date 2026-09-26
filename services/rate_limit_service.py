@@ -1,30 +1,37 @@
 """
 Ограничение частоты запросов — раздел 16 ТЗ («предусмотреть ограничение
-частоты запросов»).
+частоты запросов»): /auth/login, /auth/register, отклонённые webhook-запросы,
+проверка ответов AI.
 
-Этап 1: простой счётчик с фиксированным окном в памяти процесса, включён для
-/auth/login и /auth/register (защита от подбора пароля и массовой регистрации).
-Внешних зависимостей не требует.
-
-Ограничение реализации: счётчик локален для процесса. При нескольких воркерах
-или репликах лимит станет общим только после переноса счётчика в Redis либо
-включения лимитов на уровне reverse proxy — это относится к этапу 9
-(«Масштабирование»), в ТЗ отдельного требования к распределённому лимиту нет.
+Этап 9: счётчики с фиксированным окном хранятся в общей БД (таблица
+rate_limit_counters), поэтому лимит един для всех воркеров и реплик.
+Одна попытка — один атомарный UPSERT (INSERT … ON CONFLICT DO UPDATE …
+RETURNING) в PostgreSQL и SQLite. Если БД недоступна, лимит пропускает
+запрос (fail-open) и пишет ошибку в лог: сбой счётчика не должен закрывать
+вход в кабинет. Старые окна удаляет фоновая очистка (purge_expired).
 """
 
 from __future__ import annotations
 
-import threading
+import logging
 import time
-from collections import defaultdict
 
 from fastapi import HTTPException, Request, status
+from sqlalchemy import case, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from config import settings
+from database import SessionLocal
+from models import RateLimitCounter
 
-# ключ -> (начало окна, количество запросов)
-_counters: dict[str, tuple[float, int]] = defaultdict(lambda: (0.0, 0))
-_lock = threading.Lock()
+logger = logging.getLogger("leadpilot.rate_limit")
+
+_MAX_KEY = 200
+# Окна старше суток точно закрыты: самое длинное окно в настройках — минуты.
+_EXPIRED_AFTER_SECONDS = 86400
 
 
 def client_ip(request: Request) -> str:
@@ -44,19 +51,54 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _increment(db: Session, key: str, window_start: int) -> int:
+    """Атомарно увеличить счётчик окна; новое окно начинает счёт заново."""
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        insert = pg_insert
+    elif dialect == "sqlite":
+        insert = sqlite_insert
+    else:  # pragma: no cover - другие СУБД проект не поддерживает
+        raise SQLAlchemyError(f"rate limit: СУБД {dialect} не поддерживается")
+    stmt = insert(RateLimitCounter).values(key=key, window_start=window_start, count=1)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[RateLimitCounter.key],
+        set_={
+            "count": case(
+                (
+                    RateLimitCounter.window_start == stmt.excluded.window_start,
+                    RateLimitCounter.count + 1,
+                ),
+                else_=1,
+            ),
+            "window_start": stmt.excluded.window_start,
+        },
+    ).returning(RateLimitCounter.count)
+    return int(db.execute(stmt).scalar_one())
+
+
 def hit(scope: str, identity: str, *, limit: int, window_seconds: int) -> bool:
-    """Зарегистрировать попытку. False — лимит исчерпан."""
-    key = f"{scope}:{identity}"
-    now = time.monotonic()
-    with _lock:
-        window_start, count = _counters[key]
-        if now - window_start >= window_seconds:
-            _counters[key] = (now, 1)
-            return True
-        if count >= limit:
-            return False
-        _counters[key] = (window_start, count + 1)
+    """Зарегистрировать попытку. False — лимит окна исчерпан."""
+    key = f"{scope}:{identity}"[:_MAX_KEY]
+    now = int(time.time())
+    window_start = now - now % max(window_seconds, 1)
+    try:
+        with SessionLocal() as db:
+            count = _increment(db, key, window_start)
+            db.commit()
+    except SQLAlchemyError:
+        logger.exception("Счётчик rate limit недоступен: запрос %s пропущен без лимита", scope)
         return True
+    return count <= limit
+
+
+def purge_expired(now: float | None = None) -> int:
+    """Удалить закрытые окна (вызывается фоновой очисткой раз в сутки)."""
+    border = int(now if now is not None else time.time()) - _EXPIRED_AFTER_SECONDS
+    with SessionLocal() as db:
+        result = db.execute(delete(RateLimitCounter).where(RateLimitCounter.window_start < border))
+        db.commit()
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
 
 def enforce_auth_rate_limit(request: Request, scope: str) -> None:
@@ -79,14 +121,15 @@ def enforce_auth_rate_limit(request: Request, scope: str) -> None:
 
 def reset() -> None:
     """Сброс счётчиков (используется в тестах)."""
-    with _lock:
-        _counters.clear()
+    with SessionLocal() as db:
+        db.execute(delete(RateLimitCounter))
+        db.commit()
 
 
 def enforce_webhook_rejection_limit(request: Request) -> None:
     """Лимит на ОТКЛОНЁННЫЕ webhook-запросы с одного IP (подбор secret_token).
 
-    Успешные запросы Telegram не ограничиваются: он легитимно присылает
+    Успешные запросы каналов не ограничиваются: Telegram и VK легитимно присылают
     пачки обновлений. 429 отдаётся до записи в system_logs.
     """
     if not settings.rate_limit_enabled:

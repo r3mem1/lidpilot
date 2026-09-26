@@ -63,6 +63,9 @@ class EventType:
     MESSAGE_PROCESSED: Final = "MESSAGE_PROCESSED"
     MESSAGE_SENT: Final = "MESSAGE_SENT"
     MESSAGE_SEND_FAILED: Final = "MESSAGE_SEND_FAILED"
+    # Этап 9: клиент запретил/разрешил сообщения от сообщества (VK)
+    CUSTOMER_CHANNEL_BLOCKED: Final = "CUSTOMER_CHANNEL_BLOCKED"
+    CUSTOMER_CHANNEL_UNBLOCKED: Final = "CUSTOMER_CHANNEL_UNBLOCKED"
 
     # CRM-ядро (этап 4, разделы 14, 17)
     LEAD_CREATED: Final = "LEAD_CREATED"

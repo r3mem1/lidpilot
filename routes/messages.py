@@ -1,6 +1,7 @@
 """
 Диалоги и сообщения — раздел 11 ТЗ:
     POST /webhooks/telegram
+    POST /webhooks/vk                               (вне §11, этап 9: второй канал)
     GET  /businesses/{business_id}/conversations
     GET  /conversations/{conversation_id}
     POST /conversations/{conversation_id}/reply
@@ -32,10 +33,11 @@ from fastapi import (
     Request,
     status,
 )
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from integrations import telegram
+from integrations import telegram, vk
 from models import (
     BusinessStatus,
     Conversation,
@@ -127,6 +129,74 @@ def telegram_webhook(
 
     background.add_task(message_service.process_incoming_message, received.message_id)
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# Webhook VK — Callback API сообщества (этап 9, вне §11)
+# --------------------------------------------------------------------------- #
+def _vk_ok() -> PlainTextResponse:
+    # Новый объект на каждый запрос: FastAPI вешает на ответ фоновые задачи запроса.
+    return PlainTextResponse("ok")
+
+
+@router.post("/webhooks/vk", response_class=PlainTextResponse)
+def vk_webhook(
+    request: Request,
+    background: BackgroundTasks,
+    event: dict = Body(...),
+    db: Session = Depends(get_db),
+) -> PlainTextResponse:
+    """Принять событие Callback API. Компания — по group_id, подлинность — по полю
+    secret (сравнивается с SHA-256 в БД). VK ждёт строку «ok» и HTTP 200, иначе
+    повторяет доставку; поэтому ошибка БД → 5xx (повтор нужен), а неподдерживаемые
+    события и дубли → «ok». Сначала сохранить сообщение, потом AI и отправка (§18).
+    """
+    parsed = vk.parse_event(event)
+    integration = integration_service.find_vk_integration(db, parsed.group_id)
+
+    if parsed.kind == "confirmation":
+        # Строка подтверждения — ответ на проверку адреса сервера; секрета в этом
+        # запросе может не быть, а строка сама по себе доступа не даёт.
+        code = ((integration.channel_settings or {}) if integration else {}).get(
+            "confirmation_code"
+        )
+        if not code:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+        return PlainTextResponse(str(code))
+
+    if integration is None or not integration_service.verify_secret(integration, parsed.secret):
+        rate_limit_service.enforce_webhook_rejection_limit(request)
+        audit_service.log_event(
+            db,
+            event_type=audit_service.EventType.WEBHOOK_REJECTED,
+            message="Событие VK отклонено: неизвестное сообщество или неверный secret",
+            level=LogLevel.WARNING,
+            payload={"ip": rate_limit_service.client_ip(request), "channel": "VK"},
+            commit=True,
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+    if parsed.kind in ("deny", "allow") and parsed.user_id:
+        message_service.set_customer_channel_blocked(
+            db, integration, parsed.user_id, blocked=parsed.kind == "deny"
+        )
+        return _vk_ok()
+
+    if parsed.message is None:
+        audit_service.log_event(
+            db,
+            event_type=audit_service.EventType.WEBHOOK_IGNORED,
+            message=f"Событие VK не обрабатывается: {parsed.reason}",
+            business_id=integration.business_id,
+            payload={"reason": parsed.reason, "event_id": parsed.event_id, "channel": "VK"},
+            commit=True,
+        )
+        return _vk_ok()
+
+    received = message_service.receive_incoming(db, integration, parsed.message)
+    if not received.duplicate:
+        background.add_task(message_service.process_incoming_message, received.message_id)
+    return _vk_ok()
 
 
 # --------------------------------------------------------------------------- #

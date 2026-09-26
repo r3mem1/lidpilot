@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import Channel, Conversation, Integration, IntegrationStatus, Service
+from models import Conversation, Integration, IntegrationStatus, Service
 from services.access_service import BusinessContext
 
 
@@ -42,11 +42,11 @@ def steps(db: Session, ctx: BusinessContext) -> list[OnboardingStep]:
         db,
         select(Service.id).where(Service.business_id == ctx.business_id, Service.active.is_(True)),
     )
-    telegram_done = _has(
+    # Этап 9: подойдёт любой подключённый канал — Telegram-бот или сообщество VK.
+    channel_done = _has(
         db,
         select(Integration.id).where(
             Integration.business_id == ctx.business_id,
-            Integration.channel == Channel.TELEGRAM,
             Integration.status == IntegrationStatus.ACTIVE,
         ),
     )
@@ -71,16 +71,16 @@ def steps(db: Session, ctx: BusinessContext) -> list[OnboardingStep]:
             services_done,
         ),
         OnboardingStep(
-            "telegram",
-            "Подключите Telegram-бота",
-            "Через него клиенты будут писать вам.",
+            "channel",
+            "Подключите Telegram-бота или сообщество VK",
+            "Через них клиенты будут писать вам.",
             f"{base}/settings",
             "К настройкам",
-            telegram_done,
+            channel_done,
         ),
         OnboardingStep(
             "first_message",
-            "Напишите боту как клиент",
+            "Напишите боту или сообществу как клиент",
             "Шаг выполнен, когда первое сообщение появится в разделе «Сообщения».",
             f"{base}/messages",
             "К сообщениям",

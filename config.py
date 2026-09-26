@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     telegram_api_base_url: str = "https://api.telegram.org"
     telegram_timeout_seconds: float = 10.0
     telegram_max_retries: int = 2
+    # Этап 9: VK (сообщения сообщества, Callback API). Ключ доступа сообщества
+    # вводит владелец в кабинете — в .env его нет, в БД он зашифрован.
+    vk_api_base_url: str = "https://api.vk.ru"
+    vk_timeout_seconds: float = 10.0
+    vk_max_retries: int = 2
     # Ключ шифрования токенов ботов в integrations.credentials_ref (раздел 16).
     # Не задан — ключ выводится из JWT_SECRET; в production задавать явно.
     secrets_encryption_key: str | None = None

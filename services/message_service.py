@@ -36,7 +36,7 @@ from ai.context import HistoryRole, HistoryTurn
 from ai.pipeline import Decision, EscalationReason
 from config import settings
 from database import SessionLocal
-from integrations.telegram import ChannelSendError, IncomingMessage
+from integrations.base import ChannelSendError, IncomingMessage
 from models import (
     AiResponse,
     AiResponseStatus,
@@ -910,3 +910,35 @@ def inbox_state(db: Session, ctx: BusinessContext) -> dict:
         )
     )
     return {"last_message_id": int(last_id or 0), "attention": int(attention or 0)}
+
+
+def set_customer_channel_blocked(
+    db: Session, integration: Integration, external_chat_id: str, blocked: bool
+) -> bool:
+    """Клиент запретил или снова разрешил сообщения от компании (VK: message_deny /
+    message_allow). Пока запрет действует, ответы клиенту не отправляются.
+    Возвращает False, если такого клиента у компании ещё нет."""
+    customer = db.scalar(
+        select(Customer).where(
+            Customer.business_id == integration.business_id,
+            Customer.channel == integration.channel,
+            Customer.external_id == external_chat_id,
+        )
+    )
+    if customer is None:
+        return False
+    if customer.channel_blocked != blocked:
+        customer.channel_blocked = blocked
+        _log(
+            db,
+            audit_service.EventType.CUSTOMER_CHANNEL_BLOCKED
+            if blocked
+            else audit_service.EventType.CUSTOMER_CHANNEL_UNBLOCKED,
+            "Клиент запретил сообщения от компании"
+            if blocked
+            else "Клиент снова разрешил сообщения от компании",
+            business_id=integration.business_id,
+            payload={"customer_id": customer.id, "channel": integration.channel.value},
+        )
+    db.commit()
+    return True

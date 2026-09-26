@@ -4,7 +4,7 @@
 <header class="page-head">
   <div>
     <h1>Настройки</h1>
-    <p>Данные компании, которые ассистент использует в ответах, и подключение каналов связи.</p>
+    <p>Данные компании, которые ассистент использует в ответах, и подключение каналов связи: Telegram и VK.</p>
   </div>
 </header>
 
@@ -78,6 +78,42 @@
           </div>
           <div class="form-actions">
             <button class="btn btn--primary" type="submit"{% if not webhook_ready %} disabled{% endif %}>Подключить бота</button>
+            <span class="form-status" data-status role="status"></span>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head">
+      <h2>VK</h2>
+      {% if vk and vk.status.value == 'ACTIVE' %}<span class="tag tag--ok">Подключено</span>
+      {% elif vk and vk.status.value == 'ERROR' %}<span class="tag tag--attention">Ошибка</span>
+      {% else %}<span class="tag">Не подключено</span>{% endif %}
+    </div>
+    <div class="sheet-body">
+      {% if vk and vk.status.value == 'ACTIVE' %}
+        <p>Сообщество <strong>{{ vk.external_account_name or ('id' ~ vk.external_account_id) }}</strong> принимает сообщения клиентов.</p>
+        <p class="muted">Адрес Callback API: {{ vk_webhook_url or 'не задан' }}</p>
+        <div class="form-actions">
+          <button class="btn btn--danger" type="button" data-api-click data-url="/businesses/{{ business_id }}/integrations/vk" data-method="DELETE"
+                  data-confirm="Отключить сообщество? Клиенты из VK перестанут получать ответы, пока вы не подключите его снова." data-confirm-ok="Отключить" data-success="reload">Отключить сообщество</button>
+        </div>
+      {% else %}
+        {% if vk and vk.last_error %}<div class="notice notice--error" role="alert">Не удалось подключить: {{ vk.last_error }}</div>{% endif %}
+        <ol class="muted howto">
+          <li>В сообществе VK: «Управление» → «Сообщения» — включите сообщения сообщества; в «Настройках для бота» включите возможности ботов.</li>
+          <li>«Управление» → «Дополнительно» → «Работа с API» → «Создать ключ» с доступом к сообщениям и к управлению сообществом.</li>
+          <li>Вставьте ключ ниже — сервер Callback API LeadPilot настроится сам. Ключ хранится в зашифрованном виде.</li>
+        </ol>
+        <form data-api-form data-method="POST" data-url="/businesses/{{ business_id }}/integrations/vk" data-success="reload" novalidate>
+          <div class="field">
+            <label for="vk_access_token">Ключ доступа сообщества</label>
+            <input class="input" id="vk_access_token" name="access_token" type="password" required autocomplete="off" spellcheck="false" placeholder="vk1.a.…">
+          </div>
+          <div class="form-actions">
+            <button class="btn btn--primary" type="submit"{% if not webhook_ready %} disabled{% endif %}>Подключить сообщество</button>
             <span class="form-status" data-status role="status"></span>
           </div>
         </form>

@@ -42,6 +42,7 @@ LABELS: dict[str, dict[str, str]] = {
         "CUSTOMER_REPLIED": "Клиент написал после вашего ответа",
     },
     "delivery": {"PENDING": "Отправляется", "SENT": "Доставлено", "FAILED": "Не доставлено"},
+    "channel": {"TELEGRAM": "Telegram", "VK": "VK"},
     "sender": {"CUSTOMER": "Клиент", "AI": "AI-ассистент", "MANAGER": "Менеджер"},
     "role": {"OWNER": "Владелец", "MANAGER": "Менеджер", "ADMIN": "Администратор"},
     "tone": {"FRIENDLY": "Дружелюбный", "FORMAL": "Официальный", "BRIEF": "Краткий"},

@@ -13,7 +13,7 @@ Jinja2 + HTML/CSS/JS (без SPA), httpx → OpenAI-совместимый LLM A
 routes/        тонкий HTTP-слой: валидация (schemas.py), зависимости доступа, вызов services
 services/      бизнес-логика, транзакции, аудит (audit_service.log_event)
 models.py      ORM;  schemas.py — Pydantic;  migrations/ — Alembic (схема в prod меняется ТОЛЬКО миграциями)
-integrations/  внешние каналы за Protocol ChannelClient (Telegram сейчас, WhatsApp потом)
+integrations/  каналы за общим контрактом integrations/base.py (ChannelClient, IncomingMessage): Telegram, VK; ядро импортирует только base
 ai/            pipeline без знаний о БД и Telegram: normalize → classify → context → respond → validate
 templates/ static/   кабинет (Jinja2)
 ```
@@ -45,7 +45,7 @@ templates/ static/   кабинет (Jinja2)
 | 6 Admin-панель (`/admin`: обзор, компании, статус/тариф/trial, события, метрики, MRR) | ✅ реализован, `smoke_test_stage6.py`, `scripts/e2e_admin.py` |
 | 7 Первый пилот | 🔄 в работе: прод на Render + Supabase, бэкап и restore-drill, Sentry (`monitoring.py`), срок хранения `system_logs`, эксплуатация — `docs/operations.md`; осталось — webhook на проде, 1–3 компании, приёмка §21 на проде |
 | 8 SaaS-автоматизация (без платежей: оплата по счёту, продление в `/admin`) | ✅ реализован: срок подписки выключает AI (`services/subscription_service.py`), баннеры, блок «Тариф», чек-лист onboarding (`services/onboarding_service.py`), `smoke_test_stage8.py` |
-| 9 Масштабирование | — |
+| 9 Масштабирование | ✅ канал VK (`integrations/vk.py`, `/webhooks/vk`), общий контракт каналов `integrations/base.py`, rate limit в общей БД (`rate_limit_counters`), `smoke_test_stage9.py` |
 
 Не выходить за границы текущего этапа: не добавлять функции из «Не входит в MVP» (§19) — календарь, биллинг, несколько каналов, мобильное приложение.
 
@@ -63,15 +63,16 @@ python smoke_test_stage5.py            # 181 проверка этапа 5
 python smoke_test_stage6.py            # 134 проверки этапа 6
 python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
 python smoke_test_stage8.py            # 39 проверок этапа 8 (подписка, onboarding)
+python smoke_test_stage9.py            # 71 проверка этапа 9 (VK, rate limit в БД)
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
-bandit -r . -x ./migrations,./smoke_test.py,./smoke_test_ai.py   # SAST
+bandit -r . -x ./migrations,./smoke_test.py,./smoke_test_ai.py,./brag-output   # SAST
 pip-audit -r requirements.txt          # уязвимости зависимостей
 ```
 Тесты — самодостаточные скрипты `smoke_test*.py` (httpx + временная SQLite). Новый этап = новый `smoke_test_stageN.py` в том же стиле.
 Токены: тесты и линтеры запускать через `python scripts/run_checks.py [stage4 …]` и `… lint [ruff|pyright|bandit|pip-audit]` —
-печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 33 LOW в `smoke_test_stage3-8.py`/`scripts/` — известный шум.
+печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 40 LOW в `smoke_test_stage3-9.py`/`scripts/` — известный шум.
 Hook `scripts/hooks/ruff_after_edit.py` проверяет правленый `.py` ruff'ом. Большие файлы (`README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`,
 `services/message_service.py`) — Grep, затем Read с `offset/limit`; широкий поиск — субагенту `Explore`; БД — MCP `sqlite` точечным SELECT.
 

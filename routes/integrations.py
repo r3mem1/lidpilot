@@ -4,6 +4,8 @@
     GET    /businesses/{business_id}/integrations
     POST   /businesses/{business_id}/integrations/telegram
     DELETE /businesses/{business_id}/integrations/telegram
+    POST   /businesses/{business_id}/integrations/vk        (этап 9)
+    DELETE /businesses/{business_id}/integrations/vk        (этап 9)
 
 ВНЕ минимального списка раздела 11 ТЗ: эти маршруты нужны для критерия
 приёмки 2 («Компания может подключить Telegram-бота»). Только OWNER —
@@ -18,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Integration, MemberRole
-from schemas import IntegrationOut, TelegramConnectRequest
+from schemas import IntegrationOut, TelegramConnectRequest, VkConnectRequest
 from services import integration_service
 from services.access_service import BusinessContext, require_business_roles
 
@@ -34,7 +36,7 @@ def _to_out(integration: Integration) -> IntegrationOut:
         channel=integration.channel,
         status=integration.status,
         bot_username=integration.external_account_name,
-        webhook_url=integration_service.webhook_url(),
+        webhook_url=integration_service.webhook_url(integration.channel),
         last_error=integration.last_error,
         created_at=integration.created_at,
         updated_at=integration.updated_at,
@@ -74,4 +76,31 @@ def disconnect_telegram(
     db: Session = Depends(get_db),
 ):
     integration_service.disconnect_telegram(db, ctx)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- #
+# VK — сообщения сообщества (этап 9, вне §11: второй канал, §1, §22)
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/businesses/{business_id}/integrations/vk",
+    response_model=IntegrationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def connect_vk(
+    payload: VkConnectRequest,
+    ctx: BusinessContext = Depends(require_business_roles(*OWNER_ONLY)),
+    db: Session = Depends(get_db),
+):
+    """Подключить сообщество: проверка ключа, сохранение, настройка Callback API."""
+    integration = integration_service.connect_vk(db, ctx, payload.access_token.get_secret_value())
+    return _to_out(integration)
+
+
+@router.delete("/businesses/{business_id}/integrations/vk", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_vk(
+    ctx: BusinessContext = Depends(require_business_roles(*OWNER_ONLY)),
+    db: Session = Depends(get_db),
+):
+    integration_service.disconnect_vk(db, ctx)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

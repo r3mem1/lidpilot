@@ -38,8 +38,8 @@
           <div class="sheet-body"><a class="btn btn--small" href="{{ base }}?offset={{ next_offset }}{% if status_filter %}&amp;status={{ status_filter }}{% endif %}{% if priority_filter %}&amp;priority={{ priority_filter }}{% endif %}">Показать ещё</a></div>
         {% endif %}
       {% else %}
-        {% call m.empty('Диалогов нет', 'Здесь появятся переписки с клиентами, как только кто-то напишет вашему боту.') %}
-          {% if is_owner %}<a class="btn btn--small" href="/cabinet/{{ business_id }}/settings">Подключить Telegram-бота</a>{% endif %}
+        {% call m.empty('Диалогов нет', 'Здесь появятся переписки с клиентами, как только кто-то напишет вам в Telegram или VK.') %}
+          {% if is_owner %}<a class="btn btn--small" href="/cabinet/{{ business_id }}/settings">Подключить канал</a>{% endif %}
         {% endcall %}
       {% endif %}
     </div>
@@ -62,7 +62,7 @@
           {% if conv.handled_by_manager and conv.status.value != 'RESOLVED' %}<span class="tag tag--info">Ведёт менеджер</span>{% endif %}
         </div>
         <div class="thread-tools">
-          {% if detail.customer.username %}<span class="muted">@{{ detail.customer.username }}</span>{% endif %}
+          <span class="muted">{{ label('channel', detail.customer.channel) }}{% if detail.customer.username %} · @{{ detail.customer.username }}{% endif %}</span>
           <a href="/cabinet/{{ business_id }}/customers/{{ detail.customer.id }}">История клиента</a>
           {% if lead %}
             <label>Статус лида

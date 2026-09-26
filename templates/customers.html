@@ -28,8 +28,8 @@
               <td class="num">{{ count }}</td>
               <td class="muted">{{ m.time(last) }}</td>
               <td>
-                Telegram
-                {% if customer.channel_blocked %}<span class="tag tag--attention">Заблокировал бота</span>{% endif %}
+                {{ label('channel', customer.channel) }}
+                {% if customer.channel_blocked %}<span class="tag tag--attention">Запретил сообщения</span>{% endif %}
               </td>
             </tr>
           {% endfor %}

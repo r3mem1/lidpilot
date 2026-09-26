@@ -44,7 +44,7 @@ from routes import integrations as integrations_routes
 from routes import leads as leads_routes
 from routes import messages as messages_routes
 from routes import team as team_routes
-from services import audit_service, message_service
+from services import audit_service, message_service, rate_limit_service
 from services.auth_service import hash_password
 from templating import templates
 
@@ -141,7 +141,8 @@ async def _reprocess_loop() -> None:
 
 async def _log_retention_loop() -> None:
     """Раздел 17: system_logs не растёт бесконечно — старые события удаляются
-    раз в system_logs_purge_interval_hours (первый запуск — при старте)."""
+    раз в system_logs_purge_interval_hours (первый запуск — при старте).
+    Этап 9: заодно удаляются закрытые окна счётчиков rate limit."""
     while True:
         try:
             deleted = await run_in_threadpool(
@@ -149,6 +150,7 @@ async def _log_retention_loop() -> None:
             )
             if deleted:
                 logger.info("Очистка system_logs: удалено событий — %s", deleted)
+            await run_in_threadpool(rate_limit_service.purge_expired)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - цикл не должен умирать из-за одного сбоя
@@ -175,7 +177,7 @@ async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
     if settings.reprocess_interval_seconds > 0:
         tasks.append(asyncio.create_task(_reprocess_loop()))
-    if settings.system_logs_retention_days > 0 and settings.system_logs_purge_interval_hours > 0:
+    if settings.system_logs_purge_interval_hours > 0:
         tasks.append(asyncio.create_task(_log_retention_loop()))
     try:
         yield
