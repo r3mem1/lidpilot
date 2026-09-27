@@ -861,6 +861,14 @@ with TestClient(app) as c:
         not bookings_of(505) and conv_state(505)["attention_reason"] == "ACTION_NOT_ALLOWED",
     )
 
+    reply = say(503, "Хочу отменить запись, не смогу прийти")
+    check(
+        "просьба отменить запись → менеджеру, без новых броней и окон",
+        len(bookings_of(503)) == 1
+        and conv_state(503)["status"] == "NEEDS_ATTENTION"
+        and not re.search(r"\d{1,2}:\d{2}", reply),
+        reply,
+    )
     colour = c.post(
         f"/businesses/{biz_a}/services",
         headers=H["owner_a"],

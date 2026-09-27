@@ -167,6 +167,9 @@ def safe_reply_for(reason: EscalationReason) -> str | None:
     return _SAFE_REPLIES.get(reason)
 
 
+# Вне ТЗ (§22): просьбы отменить или перенести запись движок записи не обрабатывает.
+_CANCEL_RE = re.compile(r"отмен|перенес|перенос|не приду|не смогу прийти|не успеваю", re.IGNORECASE)
+
 # Причина эскалации, когда человек нужен ещё до генерации ответа.
 _PRE_GENERATION_REASONS = {
     Intent.COMPLAINT: EscalationReason.COMPLAINT,
@@ -228,7 +231,9 @@ class AIPipeline:
 
         # Вне ТЗ (§22): запись по расписанию. Жалоба, спам и попытка обхода правил
         # по-прежнему уходят человеку; время и окна — только из расписания в БД.
-        if schedule is not None and self._booking_applies(classification, knowledge, schedule):
+        if schedule is not None and self._booking_applies(
+            normalized, classification, knowledge, schedule
+        ):
             return self._handle_booking(normalized, history, classification, schedule, elapsed)
 
         # Человек нужен ещё до генерации: жалоба, запись, спам, ошибка API,
@@ -321,6 +326,7 @@ class AIPipeline:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _booking_applies(
+        text: str,
         classification: Classification,
         knowledge: BusinessKnowledge,
         schedule: ScheduleProvider | None,
@@ -331,6 +337,9 @@ class AIPipeline:
             Intent.COMPLAINT,
             Intent.SPAM,
         ):
+            return False
+        # Отмена и перенос существующей записи — решает человек (движок только записывает).
+        if _CANCEL_RE.search(text):
             return False
         return classification.intent is Intent.BOOKING or schedule.in_booking_dialog()
 
