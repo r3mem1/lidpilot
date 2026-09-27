@@ -69,7 +69,7 @@ python smoke_test_stage6.py  # 134 проверки этапа 6: доступ A
 python smoke_test_stage7.py  # 36 проверок этапа 7: Sentry без PII и секретов, срок хранения журнала
 python smoke_test_stage8.py  # 39 проверок этапа 8: onboarding, срок подписки, AI выкл. по окончании срока
 python smoke_test_stage9.py  # 71 проверка этапа 9: канал VK, изоляция каналов, rate limit в общей БД
-python smoke_test_stage10.py # 122 проверки: мастера, расписание, записи, AI-запись (выбор мастера), уведомления мастеру
+python smoke_test_stage10.py # 123 проверки: мастера, расписание, записи, AI-запись (выбор мастера), уведомления мастеру
 ```
 
 Пошаговая инструкция ручной проверки (Swagger, OpenRouter, настоящий Telegram) —
