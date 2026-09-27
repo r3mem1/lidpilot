@@ -44,6 +44,7 @@ from services import (
     analytics_service,
     business_service,
     rate_limit_service,
+    schedule_service,
     subscription_service,
 )
 from services.access_service import (
@@ -255,4 +256,5 @@ def get_analytics(
     db: Session = Depends(get_db),
 ):
     start, end = analytics_service.resolve_period(date_from, date_to)
-    return analytics_service.period_summary(db, ctx, start, end)
+    tz = schedule_service.business_tz(ctx.business)
+    return analytics_service.period_summary(db, ctx, start, end, tz)

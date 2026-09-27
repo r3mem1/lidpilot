@@ -2,13 +2,13 @@
 Базовая аналитика компании — раздел 13 ТЗ («Аналитика: базовые показатели за
 выбранный период», «Обзор»). Расширенная сквозная аналитика в MVP не входит (раздел 19).
 
-Границы периода — по UTC (часового пояса компании в модели данных нет). Все запросы
-фильтруются по business_id.
+Границы периода и разбивка по дням — в часовом поясе компании (businesses.timezone):
+«сегодня» в отчёте совпадает с «сегодня» владельца. Все запросы фильтруются по business_id.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -57,7 +57,9 @@ def _count(db: Session, stmt) -> int:
     return int(db.scalar(stmt) or 0)
 
 
-def period_summary(db: Session, ctx: BusinessContext, start: datetime, end: datetime) -> dict:
+def period_summary(
+    db: Session, ctx: BusinessContext, start: datetime, end: datetime, tz: tzinfo = UTC
+) -> dict:
     """Показатели за период. Каждая цифра считается отдельным простым запросом."""
     bid = ctx.business_id
     in_period_msg = (
@@ -161,29 +163,33 @@ def period_summary(db: Session, ctx: BusinessContext, start: datetime, end: date
         "leads_by_priority": leads_by_priority,
         "leads_by_status": leads_by_status,
         "intents": intents,
-        "daily": _daily_series(db, bid, start, end),
+        "daily": _daily_series(db, bid, start, end, tz),
     }
 
 
-def _daily_series(db: Session, business_id: int, start: datetime, end: datetime) -> list[dict]:
-    """Сообщения по суткам: входящие, ответы AI и ответы менеджеров."""
+def _daily_series(
+    db: Session, business_id: int, start: datetime, end: datetime, tz: tzinfo = UTC
+) -> list[dict]:
+    """Сообщения по суткам компании: входящие, ответы AI и ответы менеджеров.
+    Сутки считаются в поясе компании в Python: date() в SQL дал бы сутки UTC,
+    а перевод пояса в SQLite и PostgreSQL устроен по-разному."""
     rows = db.execute(
-        select(func.date(Message.created_at), Message.sender_type, func.count(Message.id))
-        .where(
+        select(Message.created_at, Message.sender_type).where(
             Message.business_id == business_id,
             Message.created_at >= start,
             Message.created_at <= end,
         )
-        .group_by(func.date(Message.created_at), Message.sender_type)
     ).all()
     by_day: dict[str, dict[str, int]] = {}
-    for day, sender, count in rows:
-        bucket = by_day.setdefault(str(day), {})
-        bucket[sender.value if hasattr(sender, "value") else str(sender)] = int(count)
+    for created, sender in rows:
+        moment = created if created.tzinfo else created.replace(tzinfo=UTC)
+        bucket = by_day.setdefault(moment.astimezone(tz).date().isoformat(), {})
+        key = sender.value if hasattr(sender, "value") else str(sender)
+        bucket[key] = bucket.get(key, 0) + 1
 
     series = []
-    cursor: date = start.date()
-    last: date = end.date()
+    cursor: date = start.astimezone(tz).date()
+    last: date = end.astimezone(tz).date()
     while cursor <= last:
         bucket = by_day.get(cursor.isoformat(), {})
         series.append(

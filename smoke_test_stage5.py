@@ -324,7 +324,7 @@ with TestClient(app) as c:
     ).json()
     check(
         "автоответ включён обратно: цена из прайса",
-        pv["decision"] == "SEND" and "1500" in pv["reply"],
+        pv["decision"] == "SEND" and "1500" in pv["reply"].replace("\u00a0", "").replace(" ", ""),
     )
     check(
         "проверка ответа включена по умолчанию (AI_PREVIEW_ENABLED=true)",

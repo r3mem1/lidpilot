@@ -31,8 +31,15 @@ from ai.booking import (
     render_request_reply,
     summarize_request,
 )
-from ai.classifier import Classification, Intent, MessageClassifier, Priority
+from ai.classifier import (
+    Classification,
+    Intent,
+    MessageClassifier,
+    Priority,
+    classify_by_rules,
+)
 from ai.context import BusinessKnowledge, HistoryTurn
+from ai.faq import FAQ_PROMPT_VERSION, LATE_RE, discount_question, faq_answer
 from ai.llm_client import LLMClient, LLMError, get_llm_client
 from ai.responder import GeneratedResponse, Responder, ResponseSource
 from ai.validator import ResponseValidator, ValidationResult
@@ -64,6 +71,9 @@ class EscalationReason(str, enum.Enum):
     EXTERNAL_API_ERROR = "EXTERNAL_API_ERROR"  # ошибка внешнего API
     VALIDATION_FAILED = "VALIDATION_FAILED"  # ответ не прошёл проверку
     SPAM_SUSPECTED = "SPAM_SUSPECTED"  # похоже на спам
+    # Решение 2026-09-28: клиент предупреждает (опоздание) — ответ шаблоном,
+    # администратор видит диалог.
+    CLIENT_NOTICE = "CLIENT_NOTICE"
 
 
 @dataclass(frozen=True)
@@ -180,6 +190,11 @@ REPLY_CANCEL = (
 REPLY_SPAM = (
     "Здравствуйте! Если у вас вопрос об услугах или записи — напишите, пожалуйста, подробнее."
 )
+REPLY_LATE = (
+    "Спасибо, что предупредили! Передали администратору — если что-то изменится, он напишет здесь."
+)
+# Без слов «скидка/акция»: иначе шаблон сам нарушал бы правило валидатора.
+REPLY_DISCOUNT = "Про специальные предложения уточню у администратора — он ответит здесь."
 
 _SAFE_REPLIES: dict[EscalationReason, str | None] = {
     EscalationReason.HOT_LEAD_CONFIRMATION: REPLY_BOOKING_REQUEST,
@@ -195,6 +210,7 @@ _SAFE_REPLIES: dict[EscalationReason, str | None] = {
     EscalationReason.AMBIGUOUS_REQUEST: REPLY_CLARIFY,
     EscalationReason.EXTERNAL_API_ERROR: REPLY_RECEIVED,
     EscalationReason.SPAM_SUSPECTED: REPLY_SPAM,
+    EscalationReason.CLIENT_NOTICE: REPLY_LATE,
     # Владелец выключил автоответы — никаких ответов, даже шаблонов.
     EscalationReason.AUTO_REPLY_DISABLED: None,
 }
@@ -212,6 +228,8 @@ ALL_TEMPLATES: tuple[str, ...] = (
     REPLY_NO_SLOTS,
     REPLY_CANCEL,
     REPLY_SPAM,
+    REPLY_LATE,
+    REPLY_DISCOUNT,
 )
 
 
@@ -341,6 +359,12 @@ class AIPipeline:
                 reply_override=REPLY_TEXT_ONLY,
             )
 
+        # Решение 2026-09-28 (аудит прода): «опоздаю», простые факты и скидки
+        # отвечаются шаблоном из данных компании — мгновенно и без LLM.
+        quick = self._quick_answer(normalized, history, knowledge, schedule, elapsed)
+        if quick is not None:
+            return quick
+
         # Шаги Intent + Priority classification.
         classification = self._classifier.classify(normalized, history, knowledge)
 
@@ -455,6 +479,10 @@ class AIPipeline:
         except LLMError as exc:
             # Раздел 6.7 и сценарий C раздела 7: ошибка внешнего API → менеджер.
             logger.warning("Генерация ответа не удалась: %s", exc)
+            # Вопрос о факте из данных компании — отвечаем шаблоном, а не «получили».
+            fallback = self._faq_result(normalized, knowledge, classification, elapsed)
+            if fallback is not None:
+                return fallback
             return PipelineResult(
                 decision=Decision.ESCALATE,
                 normalized_text=normalized,
@@ -467,6 +495,10 @@ class AIPipeline:
         # Шаг Validate.
         validation = self._validator.validate(response, knowledge)
         if not validation.ok:
+            # Модель ошиблась в факте, который есть в данных (адрес, цена) — шаблон.
+            fallback = self._faq_result(normalized, knowledge, classification, elapsed)
+            if fallback is not None:
+                return fallback
             return PipelineResult(
                 decision=Decision.ESCALATE,
                 normalized_text=normalized,
@@ -497,6 +529,94 @@ class AIPipeline:
             reply_text=response.text,
             response=response,
             validation=validation,
+            latency_ms=elapsed(),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Ответы шаблоном без LLM (решение 2026-09-28, аудит прода)
+    # ------------------------------------------------------------------ #
+    def _quick_answer(
+        self,
+        normalized: str,
+        history: list[HistoryTurn],
+        knowledge: BusinessKnowledge,
+        schedule: ScheduleProvider | None,
+        elapsed,
+    ) -> PipelineResult | None:
+        """«Опоздаю», вопрос об адресе/графике/телефоне/цене, вопрос о скидках —
+        до вызова LLM. Жалоба, спам, обход правил и запись идут обычным путём."""
+        if not knowledge.auto_reply:
+            return None
+        rules = classify_by_rules(normalized)
+        if rules.action_not_allowed or rules.intent in (Intent.COMPLAINT, Intent.SPAM):
+            return None
+        if LATE_RE.search(normalized):
+            classification = replace(
+                rules,
+                intent=Intent.OTHER,
+                priority=Priority.WARM,
+                needs_manager=True,
+                reason="Правила: клиент предупреждает об опоздании",
+            )
+            return PipelineResult(
+                decision=Decision.ESCALATE,
+                normalized_text=normalized,
+                classification=classification,
+                escalation_reason=EscalationReason.CLIENT_NOTICE,
+                escalation_detail=classification.reason,
+                latency_ms=elapsed(),
+            )
+        # В середине записи (предложены окна, уточняется заявка) ответ шаблоном
+        # оборвал бы диалог записи — такие сообщения разбирает движок/LLM.
+        if rules.intent is Intent.BOOKING or _awaiting_booking_details(history):
+            return None
+        if schedule is not None and schedule.in_booking_dialog():
+            return None
+        result = self._faq_result(normalized, knowledge, rules, elapsed)
+        if result is not None:
+            return result
+        if discount_question(normalized, knowledge):
+            classification = replace(
+                rules, needs_manager=True, reason="Правила: вопрос о скидках, в данных их нет"
+            )
+            return PipelineResult(
+                decision=Decision.ESCALATE,
+                normalized_text=normalized,
+                classification=classification,
+                escalation_reason=EscalationReason.MISSING_DATA,
+                escalation_detail=classification.reason,
+                latency_ms=elapsed(),
+                reply_override=REPLY_DISCOUNT,
+            )
+        return None
+
+    @staticmethod
+    def _faq_result(
+        normalized: str,
+        knowledge: BusinessKnowledge,
+        classification: Classification,
+        elapsed,
+    ) -> PipelineResult | None:
+        """Ответ шаблоном на факт из данных компании. Валидатор LLM-текста не нужен:
+        текст собран только из BusinessKnowledge (как ответы движка записи)."""
+        if classification.intent in (Intent.BOOKING, Intent.COMPLAINT, Intent.SPAM):
+            return None
+        text = faq_answer(normalized, knowledge)
+        if text is None:
+            return None
+        response = GeneratedResponse(
+            text=text,
+            model="faq-template",
+            prompt_version=FAQ_PROMPT_VERSION,
+            latency_ms=0,
+            source=ResponseSource.FAQ_TEMPLATE,
+        )
+        return PipelineResult(
+            decision=Decision.SEND,
+            normalized_text=normalized,
+            classification=replace(classification, needs_manager=False),
+            reply_text=text,
+            response=response,
             latency_ms=elapsed(),
         )
 

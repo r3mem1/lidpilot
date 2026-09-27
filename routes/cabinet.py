@@ -23,7 +23,7 @@ access_service. Любое изменение данных JavaScript делае
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -461,8 +461,9 @@ def leads_page(
     status_filter = _enum_or_none(LeadStatus, status)
     unassigned = assigned == "none"
     assigned_id = None if unassigned else _int_or_none(assigned)
-    start = _day_start(date_from)
-    end = _day_end(date_to)
+    business_tz = schedule_service.business_tz(ctx.business)
+    start = _day_start(date_from, business_tz)
+    end = _day_end(date_to, business_tz)
     rows = lead_service.list_leads(
         db,
         ctx,
@@ -506,14 +507,15 @@ def _parse_day(value: str | None) -> date | None:
         return None
 
 
-def _day_start(value: str | None) -> datetime | None:
+def _day_start(value: str | None, tz: tzinfo = UTC) -> datetime | None:
+    """Начало дня в поясе компании (фильтры по датам совпадают с её «сегодня»)."""
     day = _parse_day(value)
-    return datetime.combine(day, time.min, tzinfo=UTC) if day else None
+    return datetime.combine(day, time.min, tzinfo=tz) if day else None
 
 
-def _day_end(value: str | None) -> datetime | None:
+def _day_end(value: str | None, tz: tzinfo = UTC) -> datetime | None:
     day = _parse_day(value)
-    return datetime.combine(day, time.max, tzinfo=UTC) if day else None
+    return datetime.combine(day, time.max, tzinfo=tz) if day else None
 
 
 # --------------------------------------------------------------------------- #
@@ -887,10 +889,11 @@ def analytics_page(
     ctx: BusinessContext = Depends(page_business(*OWNER_ONLY)),
     db: Session = Depends(get_db),
 ):
+    tz = schedule_service.business_tz(ctx.business)
     now = datetime.now(UTC)
     start, end = now - timedelta(days=days), now
     custom = False
-    from_day, to_day = _day_start(date_from), _day_end(date_to)
+    from_day, to_day = _day_start(date_from, tz), _day_end(date_to, tz)
     if from_day is not None and to_day is not None:
         start, end, custom = from_day, to_day, True
     try:
@@ -898,7 +901,7 @@ def analytics_page(
     except HTTPException:
         # Некорректный период (конец раньше начала, больше года): последние 30 суток.
         start, end, custom = now - timedelta(days=30), now, False
-    summary = analytics_service.period_summary(db, ctx, start, end)
+    summary = analytics_service.period_summary(db, ctx, start, end, tz)
     daily_max = max((d["incoming"] for d in summary["daily"]), default=0)
     return render(
         request,
@@ -910,8 +913,9 @@ def analytics_page(
         summary=summary,
         daily_max=daily_max,
         days=None if custom else days,
-        date_from=start.date().isoformat(),
-        date_to=end.date().isoformat(),
+        date_from=start.astimezone(tz).date().isoformat(),
+        date_to=end.astimezone(tz).date().isoformat(),
+        tz_name=ctx.business.timezone,
     )
 
 

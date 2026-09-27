@@ -34,6 +34,7 @@ templates/ static/   кабинет (Jinja2)
    **Ответ на каждое сообщение** (решение заказчика 2026-09-27, отступление от §6.7): клиент всегда получает ответ — AI или шаблон `REPLY_*` из `ai/pipeline.py`;
    молчание — только при `handled_by_manager` или выключенных автоответах (`ai_auto_reply`). «Передаю администратору» — только если AI не понял запрос
    (сначала один переспрос). Серия сообщений — один ответ (`reply_debounce_seconds`); `message_service.ensure_replies` шлёт шаблон, если ответа нет 2 мин.
+   Адрес, график, телефон и цены из прайса — шаблоном `ai/faq.py` без LLM (и как запасной ответ при сбое модели); «опоздаю» → `CLIENT_NOTICE`.
 7. Кабинет (`routes/cabinet.py`, `templates/`, `static/`): весь чужой текст только через автоэкранирование Jinja (без `|safe`), в JS — `textContent`; без inline-скриптов/стилей (строгий CSP в `main.py`); данные кабинет меняет только через JSON API; cookie-сессия защищена проверкой Origin (`enforce_same_origin`).
 8. Роль проверяется на **каждом** защищённом endpoint; `/admin/*` — только ADMIN (`require_platform_admin`); ADMIN не создаётся публичной регистрацией.
 
@@ -60,7 +61,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head                   # миграции; новая: alembic revision --autogenerate -m "..."
 uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
-python smoke_test_ai.py                # 155 проверок этапа 2
+python smoke_test_ai.py                # 168 проверок этапа 2
 python smoke_test_stage3.py            # 149 проверок этапа 3 (+ серия сообщений, контроль ответа)
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 181 проверка этапа 5

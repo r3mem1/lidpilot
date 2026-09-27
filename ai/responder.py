@@ -34,6 +34,8 @@ class ResponseSource(str, enum.Enum):
     OFFLINE_TEMPLATE = "OFFLINE_TEMPLATE"
     # Вне ТЗ (§22): текст записи собран шаблоном из расписания в БД (ai/booking.py).
     BOOKING_ENGINE = "BOOKING_ENGINE"
+    # Решение 2026-09-28: адрес, график, телефон, цены — шаблоном из данных (ai/faq.py).
+    FAQ_TEMPLATE = "FAQ_TEMPLATE"
 
 
 @dataclass(frozen=True)

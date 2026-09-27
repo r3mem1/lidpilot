@@ -415,6 +415,7 @@ td.pole-cell .pole { min-height: 34px; height: 100%; }
 .center-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .center-card { width: min(520px, 100%); padding: 28px; }
 .center-card h1 { font: 500 22px/1.25 var(--display); margin-bottom: 10px; }
+.center-card .lead-text { margin-bottom: 18px; }
 .company-list { display: grid; gap: 8px; margin: 18px 0; }
 .company-list a { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-s); text-decoration: none; color: var(--ink); font-weight: 600; }
 .company-list a:hover { background: var(--sheet-2); }

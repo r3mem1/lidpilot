@@ -344,8 +344,16 @@ pipe = AIPipeline(
 r = pipe.process("Сколько стоит стрижка + борода?", KNOWLEDGE)
 check("A: ответ отправляется", r.decision is Decision.SEND, r.decision.value)
 check("A: intent=PRICE, priority=WARM", r.classification.intent is Intent.PRICE)
-check("A: текст ответа содержит цену из БД", "1500" in (r.reply_text or ""))
-check("A: ответ прошёл валидацию", r.validation is not None and r.validation.ok)
+# Решение 2026-09-28: вопрос о цене из прайса отвечается шаблоном без LLM.
+check(
+    "A: текст ответа содержит цены из БД",
+    "1500" in (r.reply_text or "").replace("\u00a0", "").replace(" ", "")
+    and "1000" in (r.reply_text or "").replace("\u00a0", "").replace(" ", ""),
+)
+check(
+    "A: ответ собран шаблоном из данных, LLM не вызывался",
+    r.response is not None and r.response.source.value == "FAQ_TEMPLATE",
+)
 check("A: латентность зафиксирована", r.latency_ms >= 0 and r.response.latency_ms >= 0)
 
 # Сценарий B — запись: AI не обещает время, диалог уходит менеджеру.
@@ -366,14 +374,14 @@ pipe_err = AIPipeline(
         respond=LLMUnavailable("LLM недоступен после 3 попыток"),
     )
 )
-r = pipe_err.process("Сколько стоит стрижка?", KNOWLEDGE)
+r = pipe_err.process("Что входит в стрижку?", KNOWLEDGE)
 check("C: эскалация при ошибке API", r.decision is Decision.ESCALATE)
 check(
     "C: причина — ошибка внешнего API",
     r.escalation_reason is EscalationReason.EXTERNAL_API_ERROR,
     str(r.escalation_reason),
 )
-check("C: сообщение не потеряно (есть след)", r.normalized_text.startswith("Сколько"))
+check("C: сообщение не потеряно (есть след)", r.normalized_text.startswith("Что входит"))
 
 print("\n=== 8. Pipeline: защита от выдумок и прочие эскалации ===")
 pipe_bad_price = AIPipeline(
@@ -418,7 +426,7 @@ pipe_broken = AIPipeline(
         respond=LLMInvalidResponse("не JSON"),
     )
 )
-r = pipe_broken.process("Сколько стоит стрижка?", KNOWLEDGE)
+r = pipe_broken.process("Что входит в стрижку?", KNOWLEDGE)
 check(
     "нечитаемый ответ модели → эскалация",
     r.decision is Decision.ESCALATE and r.escalation_reason is EscalationReason.EXTERNAL_API_ERROR,
@@ -428,8 +436,15 @@ print("\n=== 9. Офлайн-режим (AI_PROVIDER=stub) ===")
 pipe_offline = AIPipeline(OfflineLLMClient())
 r = pipe_offline.process("Сколько стоит стрижка?", KNOWLEDGE)
 check("офлайн: ответ по данным БД отправляется", r.decision is Decision.SEND, r.decision.value)
-check("офлайн: в ответе реальная цена", "1500" in (r.reply_text or ""), r.reply_text or "")
-check("офлайн: ответ прошёл валидацию", r.validation.ok and not r.validation.escalate)
+check(
+    "офлайн: в ответе реальная цена",
+    "1500" in (r.reply_text or "").replace("\u00a0", "").replace(" ", ""),
+    r.reply_text or "",
+)
+check(
+    "офлайн: цена из прайса — шаблоном из данных (без валидатора LLM-текста)",
+    r.response is not None and r.response.source.value == "FAQ_TEMPLATE",
+)
 r = pipe_offline.process("Хочу записаться", KNOWLEDGE)
 check("офлайн: запись всё равно к менеджеру", r.decision is Decision.ESCALATE)
 r = pipe_offline.process("Сколько стоит?", empty_price_business)
@@ -587,7 +602,7 @@ with TestClient(app) as c:
         f"/businesses/{biz['id']}/ai/preview",
         headers=h,
         json={
-            "text": "Сколько стоит стрижка и борода?",
+            "text": "Расскажите, что входит в стрижку и бороду?",
             "history": [{"role": "CUSTOMER", "text": "Здравствуйте"}],
         },
     )
@@ -698,7 +713,7 @@ with TestClient(app) as c:
         )
     )
     r = c.post(
-        f"/businesses/{biz['id']}/ai/preview", headers=h, json={"text": "Сколько стоит стрижка?"}
+        f"/businesses/{biz['id']}/ai/preview", headers=h, json={"text": "Что входит в стрижку?"}
     ).json()
     check(
         "preview: ошибка LLM → EXTERNAL_API_ERROR", r["escalation_reason"] == "EXTERNAL_API_ERROR"
@@ -723,8 +738,8 @@ check(
 )
 check("в логе время ответа AI", "latency_ms" in meta and "response_latency_ms" in meta)
 check(
-    "в логе модель и версия промпта",
-    meta.get("model") == "fake-model" and meta.get("prompt_version"),
+    "в логе модель (или шаблон) и версия промпта",
+    bool(meta.get("model")) and bool(meta.get("prompt_version")),
 )
 check("в логе причина классификации", bool(meta.get("reason")))
 err = conn.execute(
@@ -975,6 +990,89 @@ res = AIPipeline().process("Сколько стоит стрижка?", KNOWLEDG
 check(
     "при SEND безопасный ответ не нужен", res.decision is Decision.SEND and res.safe_reply is None
 )
+
+# Факты из данных — шаблоном без LLM (решение 2026-09-28, аудит прода).
+from ai.pipeline import REPLY_BOOKING_REQUEST, REPLY_DISCOUNT, REPLY_LATE  # noqa: E402
+
+KNOW_F = replace(KNOWLEDGE, address="Москва, ул. Тестовая, 1")
+for question, must in [
+    ("Где вы находитесь?", "ул. Тестовая, 1"),
+    ("До скольки работаете?", "10:00-21:00"),
+    ("Дайте телефон", "+7 999 000-00-00"),
+    ("А борода сколько?", "1000"),
+    ("Какие у вас цены?", "1500"),
+    ("Где вы и до скольки работаете?", "ул. Тестовая"),
+]:
+    spy = FakeLLMClient(classify=LLMUnavailable("не должен вызываться"))
+    res = AIPipeline(spy).process(question, KNOW_F)
+    text = (res.reply_text or "").replace(" ", "").replace(" ", "")
+    check(
+        f"шаблон без LLM: «{question}»",
+        res.decision is Decision.SEND
+        and must.replace(" ", "") in text
+        and not spy.calls
+        and res.response is not None
+        and res.response.source.value == "FAQ_TEMPLATE",
+        f"{res.reply_text} calls={spy.calls}",
+    )
+spy = FakeLLMClient(
+    classify={"intent": "PRICE", "priority": "WARM", "needs_manager": False, "reason": "цена"},
+    respond={
+        "reply": "Окрашивания в прайсе нет, уточню у администратора.",
+        "used_prices": [],
+        "missing_info": True,
+        "needs_manager": True,
+        "reason": "нет услуги",
+    },
+)
+AIPipeline(spy).process("Сколько стоит стрижка с окрашиванием?", KNOW_F)
+check("«стрижка с окрашиванием» — не шаблоном, решает LLM", "respond" in spy.calls, str(spy.calls))
+res = AIPipeline().process("Где вы находитесь?", replace(KNOW_F, auto_reply=False))
+check(
+    "автоответы выключены — и шаблонов фактов нет",
+    res.decision is Decision.ESCALATE and res.safe_reply is None,
+)
+dialog_f = [
+    HistoryTurn(role=HistoryRole.CUSTOMER, text="Хочу записаться"),
+    HistoryTurn(role=HistoryRole.AI, text=REPLY_BOOKING_REQUEST),
+]
+res = AIPipeline(
+    FakeLLMClient(
+        classify={"intent": "QUESTION", "priority": "WARM", "needs_manager": False, "reason": "?"},
+        respond=LLMUnavailable("таймаут"),
+    )
+).process("а где вы находитесь?", KNOW_F, dialog_f)
+check(
+    "сбой LLM на вопрос об адресе → шаблон с адресом, а не «сообщение получили»",
+    res.decision is Decision.SEND and "ул. Тестовая" in (res.reply_text or ""),
+    str(res.reply_text),
+)
+res = AIPipeline(FakeLLMClient(classify=LLMUnavailable("нет"))).process(
+    "Я опоздаю минут на 10", KNOW_F
+)
+check(
+    "«опоздаю» → «спасибо, что предупредили», диалог у администратора",
+    res.escalation_reason is EscalationReason.CLIENT_NOTICE and res.safe_reply == REPLY_LATE,
+)
+res = AIPipeline().process("Есть скидки для студентов?", KNOW_F)
+check(
+    "скидки не описаны → «уточню у администратора», без LLM",
+    res.escalation_reason is EscalationReason.MISSING_DATA and res.safe_reply == REPLY_DISCOUNT,
+)
+spy = FakeLLMClient(
+    classify={"intent": "QUESTION", "priority": "WARM", "needs_manager": False, "reason": "?"},
+    respond={
+        "reply": "Да, студентам скидка 10%.",
+        "used_prices": [],
+        "missing_info": False,
+        "needs_manager": False,
+        "reason": "правила",
+    },
+)
+AIPipeline(spy).process(
+    "Есть скидки для студентов?", replace(KNOW_F, ai_rules="Студентам скидка 10% по билету.")
+)
+check("скидки описаны владельцем → отвечает LLM", "respond" in spy.calls, str(spy.calls))
 
 # Промпт: сообщение клиента изолировано тегами.
 built = build_responder_messages(

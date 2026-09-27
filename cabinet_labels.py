@@ -38,6 +38,7 @@ LABELS: dict[str, dict[str, str]] = {
         "VALIDATION_FAILED": "Ответ AI не прошёл проверку",
         "SPAM_SUSPECTED": "Похоже на спам",
         "AUTO_REPLY_DISABLED": "Автоответы отключены",
+        "CLIENT_NOTICE": "Клиент предупреждает (опоздание)",
         "DELIVERY_FAILED": "Сообщение не доставлено",
         "PROCESSING_FAILED": "Не удалось обработать",
         "BUSINESS_SUSPENDED": "Компания приостановлена",

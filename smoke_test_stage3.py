@@ -448,7 +448,8 @@ with TestClient(app) as c:
     )
     check(
         "ответ содержит цены из БД",
-        "1500" in sent[0]["text"] and "1000" in sent[0]["text"],
+        "1500" in sent[0]["text"].replace("\u00a0", "").replace(" ", "")
+        and "1000" in sent[0]["text"].replace("\u00a0", "").replace(" ", ""),
         sent[0]["text"],
     )
     out = db_rows(
@@ -778,7 +779,7 @@ with TestClient(app) as c:
     print("\n=== 8. Сценарий C: сбой LLM и сбой обработки (критерий 15) ===")
     ai_service.reset_pipeline(AIPipeline(FailingLLM()))
     sent_before = len(fake.sent(TOKEN_A))
-    c.post(hook_url, json=update(70, 1008, "Сколько стоит стрижка?"), headers=H_A)
+    c.post(hook_url, json=update(70, 1008, "Что входит в стрижку?"), headers=H_A)
     ai_service.reset_pipeline(None)
     mid = last_message_id(1008, biz_a)
     check(
@@ -984,7 +985,9 @@ with TestClient(app) as c:
     sent_b = fake.sent(TOKEN_B)
     check(
         "ответ ушёл через бота своей компании с её прайсом",
-        len(sent_b) == 1 and "2000" in sent_b[0]["text"] and "1500" not in sent_b[0]["text"],
+        len(sent_b) == 1
+        and "2000" in sent_b[0]["text"].replace("\u00a0", "").replace(" ", "")
+        and "1500" not in sent_b[0]["text"].replace("\u00a0", "").replace(" ", ""),
         str(sent_b),
     )
     check(

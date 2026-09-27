@@ -154,7 +154,7 @@
         var reasons = {
           HOT_LEAD_CONFIRMATION: "запись требует подтверждения человеком", COMPLAINT: "жалоба клиента", MISSING_DATA: "не хватает данных для ответа",
           AMBIGUOUS_REQUEST: "неясный запрос", ACTION_NOT_ALLOWED: "просьба вне прав ассистента", EXTERNAL_API_ERROR: "сбой AI-сервиса",
-          VALIDATION_FAILED: "ответ не прошёл проверку на выдуманные данные", SPAM_SUSPECTED: "похоже на спам", AUTO_REPLY_DISABLED: "автоответы отключены"
+          VALIDATION_FAILED: "ответ не прошёл проверку на выдуманные данные", SPAM_SUSPECTED: "похоже на спам", AUTO_REPLY_DISABLED: "автоответы отключены", CLIENT_NOTICE: "клиент предупреждает об опоздании"
         };
         $("[data-preview-reply]", box).textContent = d.decision === "SEND"
           ? d.reply
