@@ -9,11 +9,13 @@ Onboarding нового владельца — этап 8 «SaaS-автомат�
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import Conversation, Integration, IntegrationStatus, Service
+from models import Conversation, Integration, IntegrationStatus, Master, MasterShift, Service
+from services import schedule_service
 from services.access_service import BusinessContext
 
 
@@ -50,6 +52,31 @@ def steps(db: Session, ctx: BusinessContext) -> list[OnboardingStep]:
             Integration.status == IntegrationStatus.ACTIVE,
         ),
     )
+    # Запись к мастерам (вне ТЗ, §22): AI сам называет свободное время и записывает,
+    # только когда есть активный мастер со сменой на сегодня или позже и запись включена.
+    today = datetime.now(schedule_service.business_tz(business)).date()
+    has_master = _has(
+        db,
+        select(Master.id).where(Master.business_id == ctx.business_id, Master.active.is_(True)),
+    )
+    has_shift = has_master and _has(
+        db,
+        select(MasterShift.id)
+        .join(Master, Master.id == MasterShift.master_id)
+        .where(
+            Master.business_id == ctx.business_id,
+            Master.active.is_(True),
+            MasterShift.day >= today,
+        ),
+    )
+    booking_done = bool(business.booking_enabled) and has_shift
+    # Кнопка ведёт к шагу, на котором владелец остановился.
+    if not has_master:
+        booking_link, booking_text = f"{base}/team", "К сотрудникам"
+    elif not has_shift:
+        booking_link, booking_text = f"{base}/schedule", "К расписанию"
+    else:
+        booking_link, booking_text = f"{base}/settings", "К настройкам"
     first_message_done = _has(
         db, select(Conversation.id).where(Conversation.business_id == ctx.business_id)
     )
@@ -69,6 +96,15 @@ def steps(db: Session, ctx: BusinessContext) -> list[OnboardingStep]:
             f"{base}/services",
             "К услугам",
             services_done,
+        ),
+        OnboardingStep(
+            "booking",
+            "Включите запись к мастерам",
+            "Добавьте мастеров и их смены, затем включите в настройках «Ассистент записывает "
+            "клиентов по расписанию» — тогда ассистент сам предложит свободное время и запишет клиента.",
+            booking_link,
+            booking_text,
+            booking_done,
         ),
         OnboardingStep(
             "channel",

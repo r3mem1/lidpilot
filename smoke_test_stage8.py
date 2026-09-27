@@ -158,7 +158,7 @@ def upd(chat: int, text: str) -> dict:
 
 
 def progress(html: str) -> str | None:
-    match = re.search(r'<span class="tag">(\d) из 4</span>', html)
+    match = re.search(r'<span class="tag">(\d) из 5</span>', html)
     return match.group(1) if match else None
 
 
@@ -199,7 +199,7 @@ with TestClient(app) as c:
     print("\n=== 1. Onboarding: шаги по фактическим данным ===")
     html = page_as("owner_a@example.com", dash_a).text
     check(
-        "новая компания: чек-лист показан, 0 из 4",
+        "новая компания: чек-лист показан, 0 из 5",
         "Осталось настроить" in html and progress(html) == "0",
     )
     check("у невыполненных шагов есть кнопки", ">К настройкам<" in html and ">К услугам<" in html)
@@ -215,7 +215,7 @@ with TestClient(app) as c:
         json={"phone": "+7 900 000-00-00", "working_hours": "10:00–21:00"},
     )
     html = page_as("owner_a@example.com", dash_a).text
-    check("адрес, телефон и график → 1 из 4", progress(html) == "1")
+    check("адрес, телефон и график → 1 из 5", progress(html) == "1")
 
     svc = c.post(
         f"/businesses/{biz_a}/services",
@@ -226,7 +226,7 @@ with TestClient(app) as c:
     check("неактивная услуга шаг не закрывает", progress(html) == "1")
     c.put(f"/services/{svc['id']}", headers=H["owner_a"], json={"active": True})
     html = page_as("owner_a@example.com", dash_a).text
-    check("активная услуга → 2 из 4", progress(html) == "2" and ">К услугам<" not in html)
+    check("активная услуга → 2 из 5", progress(html) == "2" and ">К услугам<" not in html)
 
     c.post(
         f"/businesses/{biz_a}/integrations/telegram",
@@ -235,17 +235,40 @@ with TestClient(app) as c:
     )
     HOOK_A = {"X-Telegram-Bot-Api-Secret-Token": fake.secret(TOKEN_A)}
     html = page_as("owner_a@example.com", dash_a).text
-    check("бот подключён → 3 из 4", progress(html) == "3")
+    check("бот подключён → 3 из 5", progress(html) == "3")
 
     html_b = page_as("owner_b@example.com", dash_b).text
-    check("у другой компании свой чек-лист (0 из 4)", progress(html_b) == "0")
+    check("у другой компании свой чек-лист (0 из 5)", progress(html_b) == "0")
 
     r = c.post("/webhooks/telegram", json=upd(101, "Сколько стоит стрижка?"), headers=HOOK_A)
     html = page_as("owner_a@example.com", dash_a).text
+    check("первое сообщение → 4 из 5", r.status_code == 200 and progress(html) == "4")
+
+    # Шаг «Запись к мастерам»: засчитывается по мастеру, смене и включённой записи;
+    # кнопка ведёт туда, где владелец остановился.
     check(
-        "первое сообщение → чек-лист исчез",
-        r.status_code == 200 and "Осталось настроить" not in html,
+        "запись не настроена: шаг ведёт к сотрудникам",
+        "Включите запись к мастерам" in html and f'href="{dash_a}/team"' in html,
     )
+    master = c.post(
+        f"/businesses/{biz_a}/masters", headers=H["owner_a"], json={"display_name": "Иван"}
+    ).json()
+    html = page_as("owner_a@example.com", dash_a).text
+    check(
+        "мастер есть, смен нет: шаг ведёт к расписанию",
+        progress(html) == "4" and f'href="{dash_a}/schedule"' in html,
+    )
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+    c.post(
+        f"/masters/{master['id']}/shifts",
+        headers=H["owner_a"],
+        json={"day": tomorrow, "start_time": "10:00", "end_time": "20:00"},
+    )
+    html = page_as("owner_a@example.com", dash_a).text
+    check("смена есть, запись выключена: шаг ещё не выполнен", progress(html) == "4")
+    c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"booking_enabled": True})
+    html = page_as("owner_a@example.com", dash_a).text
+    check("запись включена → все шаги выполнены, чек-лист исчез", "Осталось настроить" not in html)
 
     # ----------------------------------------------------------------------- #
     print("\n=== 2. Срок действует: AI отвечает, баннеров нет ===")
