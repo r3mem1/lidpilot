@@ -417,6 +417,8 @@ def create_by_staff(
     starts_at: datetime,
     client_name: str,
     comment: str | None,
+    conversation_id: int | None = None,
+    customer_id: int | None = None,
 ) -> Booking:
     master = db.get(Master, master_id)
     service = db.get(Service, service_id)
@@ -435,6 +437,8 @@ def create_by_staff(
             source=BookingSource.STAFF,
             created_by_user_id=ctx.user.id,
             comment=comment,
+            conversation_id=conversation_id,
+            customer_id=customer_id,
         )
     except BookingConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

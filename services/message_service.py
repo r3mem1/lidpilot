@@ -72,6 +72,7 @@ from services import (
     ai_service,
     audit_service,
     booking_ai_provider,
+    booking_request_service,
     booking_service,
     integration_service,
     lead_service,
@@ -635,6 +636,18 @@ def _run(db: Session, message_id: int) -> None:
         reason=classification.reason,
         message_id=message.id,
     )
+    # Вне ТЗ (§22): AI понял просьбу о записи, но бронь не поставил (нет расписания
+    # или окон) — заявка видна администратору в «Записях».
+    if result.booking_request is not None:
+        booking_request_service.save_from_ai(
+            db,
+            business_id=business_id,
+            conversation=conversation,
+            client_name=_client_name(customer),
+            draft=result.booking_request,
+            text=ai_text,
+            message_id=message.id,
+        )
 
     escalated = result.decision is Decision.ESCALATE
     if escalated:
@@ -1226,6 +1239,13 @@ def _booking_text(db: Session, booking: Booking, event: str) -> str | None:
     service = db.get(Service, booking.service_id) if booking.service_id else None
     service_name = service.name if service else "услуга"
     what = f"«{service_name}» у мастера {master.display_name if master else ''}".strip()
+    if event == "created":
+        # Сотрудник записал клиента по его заявке (запись связана с диалогом).
+        address = f" Адрес: {business.address}." if business.address else ""
+        return (
+            f"Готово, вы записаны: {what}, {when}. Ждём вас!{address} "
+            "Если планы изменятся — просто напишите сюда."
+        )
     if event == "confirmed":
         # Решение заказчика 2026-09-28: «вы записаны» клиент получил сразу при брони
         # (ai/booking.py) — подтверждение администратора второй раз ему не пишем.
@@ -1256,7 +1276,7 @@ def _booking_client_message(db: Session, booking: Booking, event: str) -> Callab
         sender_type=SenderType.MANAGER,
         text=text,
         content_type="text",
-        author_user_id=booking.decided_by_user_id,
+        author_user_id=booking.decided_by_user_id or booking.created_by_user_id,
         delivery_status=DeliveryStatus.PENDING,
     )
     db.add(outgoing)

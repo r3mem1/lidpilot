@@ -968,6 +968,148 @@ with TestClient(app) as c:
         and "вы записаны" not in reply,
         reply,
     )
+
+    # Заявка без брони видна в «Записях» (решение заказчика 2026-09-28).
+    def requests_of(chat: int) -> list[sqlite3.Row]:
+        return db_rows(
+            "SELECT r.* FROM booking_requests r JOIN customers cu ON cu.id = r.customer_id "
+            "WHERE cu.external_id = ? ORDER BY r.id",
+            str(chat),
+        )
+
+    req507 = requests_of(507)
+    check(
+        "заявка сохранена: услуга, день и время со слов клиента",
+        len(req507) == 1
+        and req507[0]["status"] == "OPEN"
+        and req507[0]["service_id"] == cut
+        and req507[0]["desired_day"] == iso(D1)
+        and str(req507[0]["desired_time"]).startswith("11:30"),
+        str([dict(r) for r in req507]),
+    )
+    say(507, "а можно на 12:30?")
+    req507 = requests_of(507)
+    check(
+        "уточнение клиента обновляет ту же заявку, а не создаёт новую",
+        len(req507) == 1 and str(req507[0]["desired_time"]).startswith("12:30"),
+        str([dict(r) for r in req507]),
+    )
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/bookings").text
+    check(
+        "«Записи»: блок «Заявки на запись» с клиентом, услугой и временем",
+        "Заявки на запись" in html
+        and "Клиент507" in html
+        and "12:30" in html
+        and f'data-fill-request="{req507[0]["id"]}"' in html,
+    )
+    check(
+        "в меню у «Записей» счётчик заявок",
+        'title="Заявки на запись"' in html,
+    )
+    html_m = page_as("master_ivan@example.com", f"/cabinet/{biz_a}/bookings").text
+    check("мастер заявок не видит", "Заявки на запись" not in html_m)
+    check(
+        "чужая компания не записывает по заявке (404)",
+        c.post(
+            f"/businesses/{biz_b}/bookings",
+            headers=H["owner_b"],
+            json={
+                "master_id": ivan,
+                "service_id": cut,
+                "day": iso(D1),
+                "start_time": "12:00",
+                "client_name": "x",
+                "request_id": req507[0]["id"],
+            },
+        ).status_code
+        == 404,
+    )
+    ivan_free = [
+        s_["local_start"][11:16]
+        for s_ in c.get(
+            f"/businesses/{biz_a}/availability",
+            headers=H["manager_a"],
+            params={
+                "service_id": cut,
+                "date_from": iso(D1),
+                "date_to": iso(D1),
+                "master_id": ivan,
+            },
+        ).json()
+        if s_["master_id"] == ivan
+    ]
+    check("у Ивана есть свободное время для записи по заявке", bool(ivan_free), str(ivan_free))
+    before = len(fake.sent(507))
+    r = c.post(
+        f"/businesses/{biz_a}/bookings",
+        headers=H["manager_a"],
+        json={
+            "master_id": ivan,
+            "service_id": cut,
+            "day": iso(D1),
+            "start_time": ivan_free[0] if ivan_free else "12:00",
+            "client_name": "Клиент507",
+            "request_id": req507[0]["id"],
+        },
+    )
+    msg = fake.sent(507)[-1]["text"] if len(fake.sent(507)) > before else ""
+    b507 = bookings_of(507)
+    check(
+        "запись по заявке: CONFIRMED, связана с клиентом, заявка DONE",
+        r.status_code == 201
+        and len(b507) == 1
+        and b507[0]["status"] == "CONFIRMED"
+        and requests_of(507)[0]["status"] == "DONE"
+        and requests_of(507)[0]["booking_id"] == b507[0]["id"],
+        f"{r.status_code} {r.text[:200]}",
+    )
+    check(
+        "клиенту сразу «Готово, вы записаны» со временем записи",
+        "вы записаны" in msg and "Стрижка" in msg and (ivan_free[:1] or ["?"])[0] in msg,
+        msg,
+    )
+    check(
+        "повторная запись по той же заявке — 409",
+        c.post(
+            f"/businesses/{biz_a}/bookings",
+            headers=H["manager_a"],
+            json={
+                "master_id": ivan,
+                "service_id": cut,
+                "day": iso(D1),
+                "start_time": "12:00",
+                "client_name": "x",
+                "request_id": req507[0]["id"],
+            },
+        ).status_code
+        == 409,
+    )
+    say(512, "запишите на бороду завтра")
+    req512 = requests_of(512)
+    close_url = f"/businesses/{biz_a}/booking-requests/{req512[0]['id']}/close"
+    check(
+        "закрыть чужую заявку нельзя (404), мастеру нельзя (403)",
+        c.post(
+            f"/businesses/{biz_b}/booking-requests/{req512[0]['id']}/close",
+            headers=H["owner_b"],
+        ).status_code
+        == 404
+        and c.post(close_url, headers=H["master_ivan"]).status_code == 403,
+    )
+    before = len(fake.sent(512))
+    r = c.post(close_url, headers=H["manager_a"])
+    check(
+        "менеджер закрыл заявку: CLOSED, клиенту ничего не ушло",
+        r.status_code == 204
+        and requests_of(512)[0]["status"] == "CLOSED"
+        and len(fake.sent(512)) == before,
+    )
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/bookings").text
+    check(
+        "выполненная и закрытая заявки из списка ушли",
+        f'data-fill-request="{req507[0]["id"]}"' not in html
+        and f'data-fill-request="{req512[0]["id"]}"' not in html,
+    )
     c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"booking_enabled": True})
 
     print("\n=== 8. Решение по брони → сообщение клиенту ===")

@@ -166,6 +166,36 @@
     });
   }
 
+  /* ---------- Записи: запись по заявке клиента (вне ТЗ, §22) ----------
+     «Записать» заполняет форму «Записать клиента» данными заявки; после сохранения
+     клиенту уходит «Готово, вы записаны», заявка закрывается (request_id). */
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("[data-fill-request]");
+    if (!button) return;
+    var form = $("#nb-form");
+    if (!form) return;
+    var set = function (name, value) {
+      var field = form.elements[name];
+      if (!field || !value) return;
+      if (field.tagName === "SELECT" && !$("option[value='" + value + "']", field)) return;
+      field.value = value;
+    };
+    form.elements.request_id.value = button.dataset.fillRequest;
+    set("service_id", button.dataset.service);
+    set("master_id", button.dataset.master);
+    set("day", button.dataset.day);
+    set("start_time", button.dataset.time);
+    form.elements.client_name.value = button.dataset.client || "";
+    var note = $("[data-request-note]", form);
+    if (note) {
+      $("[data-request-client]", note).textContent = button.dataset.client || "Клиент";
+      note.hidden = false;
+    }
+    form.scrollIntoView({ block: "center" });
+    var next = form.elements.start_time.value ? form.elements.master_id : form.elements.start_time;
+    next.focus();
+  });
+
   /* ---------- Новые сообщения: тихий опрос вместо перезагрузки страницы ---------- */
   var inbox = $("[data-poll]");
   if (inbox) {

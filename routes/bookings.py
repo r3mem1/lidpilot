@@ -12,7 +12,8 @@
     PUT    /shifts/{shift_id}                             владелец или сам мастер
     DELETE /shifts/{shift_id}                             владелец или сам мастер
     GET    /businesses/{business_id}/bookings             все роли (мастер — только свои)
-    POST   /businesses/{business_id}/bookings             владелец, менеджер
+    POST   /businesses/{business_id}/bookings             владелец, менеджер (request_id — по заявке)
+    POST   /businesses/{business_id}/booking-requests/{id}/close   владелец, менеджер
     POST   /bookings/{booking_id}/confirm | /reject       владелец, менеджер, мастер (свои)
     POST   /bookings/{booking_id}/cancel                  владелец, менеджер
     GET    /businesses/{business_id}/availability         владелец, менеджер
@@ -46,7 +47,13 @@ from schemas import (
     ShiftUpdate,
     SlotOut,
 )
-from services import booking_service, master_notify_service, master_service, schedule_service
+from services import (
+    booking_request_service,
+    booking_service,
+    master_notify_service,
+    master_service,
+    schedule_service,
+)
 from services.access_service import (
     BusinessContext,
     require_booking_access,
@@ -231,7 +238,13 @@ def create_booking(
     db: Session = Depends(get_db),
 ):
     starts_at = schedule_service.local_to_utc(ctx.business, payload.day, payload.start_time)
-    return booking_service.create_by_staff(
+    # Запись по заявке клиента (вне ТЗ, §22): заявка только своей компании (иначе 404).
+    request = (
+        booking_request_service.get_open(db, ctx, payload.request_id)
+        if payload.request_id
+        else None
+    )
+    booking = booking_service.create_by_staff(
         db,
         ctx,
         master_id=payload.master_id,
@@ -239,7 +252,27 @@ def create_booking(
         starts_at=starts_at,
         client_name=payload.client_name,
         comment=payload.comment,
+        conversation_id=request.conversation_id if request else None,
+        customer_id=request.customer_id if request else None,
     )
+    if request is not None:
+        booking_request_service.mark_done(db, ctx, request, booking.id)
+        db.refresh(booking)
+    return booking
+
+
+@router.post(
+    "/businesses/{business_id}/booking-requests/{request_id}/close",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def close_booking_request(
+    request_id: int,
+    ctx: BusinessContext = Depends(require_business_roles(*STAFF)),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Закрыть заявку без записи (вне ТЗ, §22): договорились с клиентом иначе."""
+    booking_request_service.close(db, ctx, booking_request_service.get_open(db, ctx, request_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/bookings/{booking_id}/confirm", response_model=BookingOut)

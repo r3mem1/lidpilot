@@ -741,15 +741,35 @@ def _join_ru(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " и " + items[-1]
 
 
-def request_summary_reply(
+@dataclass(frozen=True)
+class RequestDraft:
+    """Что AI понял из просьбы о записи (со слов клиента): названия услуги и
+    мастера — из данных компании, день и время — желаемые, не проверенные."""
+
+    service: str | None = None
+    master: str | None = None
+    day: date | None = None
+    at: time | None = None
+    part_of_day: str | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "service": self.service,
+            "master": self.master,
+            "day": self.day.isoformat() if self.day else None,
+            "time": self.at.strftime("%H:%M") if self.at else None,
+            "part_of_day": self.part_of_day,
+        }
+
+
+def summarize_request(
     texts: list[str],
     today: date,
     services: list[BookableService],
     masters: list[tuple[int, str]],
-) -> str | None:
-    """Ответ на просьбу о записи, когда расписания нет: что понято из сообщений
-    клиента (от старых к новым, новые уточняют старые) и чего не хватает.
-    None — в сообщениях нет ни услуги, ни дня, ни времени."""
+) -> RequestDraft | None:
+    """Заявка из сообщений клиента (от старых к новым, новые уточняют старые).
+    None — в сообщениях нет ни услуги, ни мастера, ни дня, ни времени."""
     service_id: int | None = None
     master_id: int | None = None
     day: date | None = None
@@ -766,26 +786,61 @@ def request_summary_reply(
         return None
     if service_id is None and len(services) == 1:
         service_id = services[0].id  # услуга одна — переспрашивать незачем
-
     names = {s.id: s.name for s in services}
+    return RequestDraft(
+        service=names.get(service_id) if service_id else None,
+        master=dict(masters).get(master_id) if master_id else None,
+        day=day,
+        at=at,
+        part_of_day=part,
+    )
+
+
+def describe_when(draft: RequestDraft, today: date) -> str:
+    """«завтра, 29.09, в 15:00», «в пятницу, 02.10, вечером», «» — ничего не сказано."""
+    moment = (
+        f"в {draft.at:%H:%M}"
+        if draft.at is not None
+        else (_PART_WORDS.get(draft.part_of_day or "", "") if draft.part_of_day else "")
+    )
+    day = _day_phrase(draft.day, today) if draft.day else ""
+    return ", ".join(x for x in (day, moment) if x)
+
+
+def render_request_reply(draft: RequestDraft, today: date, services: list[BookableService]) -> str:
+    """Ответ клиенту: что понято и чего не хватает; свободность не утверждается."""
     known: list[str] = []
-    if service_id is not None:
-        known.append(f"«{names[service_id]}»")
-    if master_id is not None:
-        known.append(f"мастер {dict(masters)[master_id]}")
-    moment = f"в {at:%H:%M}" if at is not None else (_PART_WORDS[part] if part else "")
-    when = ", ".join(x for x in (_day_phrase(day, today) if day else "", moment) if x)
+    if draft.service:
+        known.append(f"«{draft.service}»")
+    if draft.master:
+        known.append(f"мастер {draft.master}")
+    when = describe_when(draft, today)
     if when:
         known.append(when)
-
     missing: list[str] = []
-    if service_id is None and services:
-        missing.append("на какую услугу записать (есть: " + ", ".join(names.values()) + ")")
-    if day is None:
+    if draft.service is None and services:
+        missing.append(
+            "на какую услугу записать (есть: " + ", ".join(s.name for s in services) + ")"
+        )
+    if draft.day is None:
         missing.append("на какой день")
-    if at is None:
-        missing.append("во сколько именно" if part else "на какое время")
+    if draft.at is None:
+        missing.append("во сколько именно" if draft.part_of_day else "на какое время")
     head = f"{BOOKING_REQUEST_PREFIX}: {', '.join(known)}."
     if missing:
-        return f"{head} Уточните, пожалуйста, {_join_ru(missing)} — администратор подтвердит запись здесь."
+        return (
+            f"{head} Уточните, пожалуйста, {_join_ru(missing)} — "
+            "администратор подтвердит запись здесь."
+        )
     return f"{head} Администратор проверит, свободно ли это время, и подтвердит запись здесь."
+
+
+def request_summary_reply(
+    texts: list[str],
+    today: date,
+    services: list[BookableService],
+    masters: list[tuple[int, str]],
+) -> str | None:
+    """Текст ответа по заявке (None — в сообщениях нет деталей записи)."""
+    draft = summarize_request(texts, today, services, masters)
+    return render_request_reply(draft, today, services) if draft else None

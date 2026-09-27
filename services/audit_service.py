@@ -67,6 +67,10 @@ class EventType:
     MESSAGE_MERGED: Final = "MESSAGE_MERGED"  # серия сообщений — один ответ на последнее
     AUTO_REPLY_TEMPLATE: Final = "AUTO_REPLY_TEMPLATE"  # шаблонный ответ без AI
     REPLY_WATCHDOG: Final = "REPLY_WATCHDOG"  # сообщение осталось без ответа — шаблон
+    # Вне ТЗ (§22): заявки на запись без брони (решение 2026-09-28)
+    BOOKING_REQUEST_SAVED: Final = "BOOKING_REQUEST_SAVED"
+    BOOKING_REQUEST_DONE: Final = "BOOKING_REQUEST_DONE"
+    BOOKING_REQUEST_CLOSED: Final = "BOOKING_REQUEST_CLOSED"
     # Этап 9: клиент запретил/разрешил сообщения от сообщества (VK)
     CUSTOMER_CHANNEL_BLOCKED: Final = "CUSTOMER_CHANNEL_BLOCKED"
     CUSTOMER_CHANNEL_UNBLOCKED: Final = "CUSTOMER_CHANNEL_UNBLOCKED"

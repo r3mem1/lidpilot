@@ -1,4 +1,5 @@
 {% extends "cabinet_base.html" %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
@@ -25,6 +26,49 @@
     <button class="btn btn--small" type="submit">Показать</button>
   </form>
 </header>
+
+{% if is_staff and requests %}
+  {% set active_masters = masters|selectattr('active')|list %}
+  <section class="sheet" id="booking-requests" aria-labelledby="requests-title">
+    <div class="sheet-head">
+      <h2 id="requests-title">Заявки на запись</h2>
+      <span class="tag tag--warm">{{ requests|length }}</span>
+    </div>
+    <div class="sheet-body">
+      <p class="muted">Ассистент понял, когда клиент хочет прийти, но сам не записал: {% if active_masters %}свободного окна нет или смены не заполнены{% else %}в компании пока нет мастеров и расписания{% endif %}. Запишите клиента — ему сразу придёт «Готово, вы записаны».</p>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Хочет прийти</th><th class="grow">Услуга и клиент</th><th>Заявка</th><th class="num">Действия</th></tr></thead>
+        <tbody>
+          {% for it in requests %}
+            {% set r = it.request %}
+            <tr>
+              <td>{% if it.when %}<strong>{{ it.when }}</strong>{% else %}<span class="muted">время не названо</span>{% endif %}</td>
+              <td>
+                <span class="cell-title">{{ it.service or 'Услуга не выбрана' }}</span>{% if it.master %} · мастер {{ it.master }}{% endif %}
+                <div class="cell-sub">{{ r.client_name }}{% if r.conversation_id %} · <a href="/cabinet/{{ business_id }}/messages?c={{ r.conversation_id }}">диалог</a>{% endif %}</div>
+                {% if r.last_text %}<div class="cell-sub clamp">«{{ r.last_text }}»</div>{% endif %}
+              </td>
+              <td class="muted nowrap">{{ it.created.strftime('%d.%m %H:%M') }}</td>
+              <td class="num">
+                <div class="row-actions">
+                  {% if active_masters %}
+                    <button class="btn btn--small btn--primary" type="button" data-fill-request="{{ r.id }}" data-service="{{ r.service_id or '' }}" data-master="{{ r.master_id or '' }}" data-day="{{ it.day }}" data-time="{{ it.time }}" data-client="{{ r.client_name }}">Записать</button>
+                  {% endif %}
+                  <button class="btn btn--small" type="button" data-api-click data-url="/businesses/{{ business_id }}/booking-requests/{{ r.id }}/close" data-confirm="Закрыть заявку без записи? Клиенту ничего не придёт — при необходимости ответьте ему в диалоге." data-confirm-ok="Закрыть" data-success="reload">Закрыть</button>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if not active_masters %}
+      <div class="sheet-body"><p class="hint">Чтобы записывать по заявкам прямо здесь, добавьте мастеров в «Сотрудниках» и их смены в «Расписании». Пока можно ответить клиенту в диалоге и закрыть заявку.</p></div>
+    {% endif %}
+  </section>
+{% endif %}
 
 <section class="sheet">
   {% if items %}
@@ -96,7 +140,9 @@
 
     <section class="sheet">
       <div class="sheet-head"><h2>Записать клиента</h2></div>
-      <form class="sheet-body" data-api-form data-method="POST" data-url="/businesses/{{ business_id }}/bookings" data-success="reload" novalidate>
+      <form class="sheet-body" id="nb-form" data-api-form data-method="POST" data-url="/businesses/{{ business_id }}/bookings" data-success="reload" novalidate>
+        <input type="hidden" name="request_id" data-type="int" data-empty="omit">
+        <p class="notice notice--ok" data-request-note hidden>Запись по заявке: <strong data-request-client></strong> получит сообщение «Готово, вы записаны».</p>
         <div class="form-row">
           <div class="field">
             <label for="nb-master">Мастер</label>

@@ -92,6 +92,14 @@ class BookingStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+class BookingRequestStatus(str, enum.Enum):
+    """Заявка на запись, понятая AI без брони (нет расписания или окон)."""
+
+    OPEN = "OPEN"  # ждёт администратора
+    DONE = "DONE"  # по заявке создана запись
+    CLOSED = "CLOSED"  # закрыта без записи (договорились иначе)
+
+
 class BookingSource(str, enum.Enum):
     AI = "AI"  # бронь поставил ассистент по сообщению клиента
     STAFF = "STAFF"  # запись создал сотрудник в кабинете
@@ -826,6 +834,48 @@ class Booking(Base):
 
 Index("ix_bookings_business_starts", Booking.business_id, Booking.starts_at)
 Index("ix_bookings_master_starts", Booking.master_id, Booking.starts_at)
+
+
+class BookingRequest(Base):
+    """Заявка клиента на запись, которую AI понял, но не смог забронировать сам
+    (расписание не подключено или нет окон) — вне ТЗ, §22, решение 2026-09-28.
+    Одна открытая заявка на диалог: уточнения клиента обновляют её. Желаемые день
+    и время — со слов клиента (в поясе компании), свободность их не проверена."""
+
+    __tablename__ = "booking_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    business_id: Mapped[int] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id", ondelete="SET NULL"))
+    client_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id", ondelete="SET NULL"))
+    master_id: Mapped[int | None] = mapped_column(ForeignKey("masters.id", ondelete="SET NULL"))
+    desired_day: Mapped[date | None] = mapped_column(Date)
+    desired_time: Mapped[time | None] = mapped_column(Time)
+    part_of_day: Mapped[str | None] = mapped_column(String(16))  # morning | day | evening
+    last_text: Mapped[str | None] = mapped_column(Text)  # последнее сообщение клиента
+    status: Mapped[BookingRequestStatus] = enum_column(
+        BookingRequestStatus, nullable=False, default=BookingRequestStatus.OPEN
+    )
+    booking_id: Mapped[int | None] = mapped_column(ForeignKey("bookings.id", ondelete="SET NULL"))
+    closed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+Index("ix_booking_requests_business_status", BookingRequest.business_id, BookingRequest.status)
+Index("ix_booking_requests_conversation", BookingRequest.conversation_id)
 
 
 class MasterNotification(Base):

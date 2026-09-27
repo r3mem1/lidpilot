@@ -26,8 +26,10 @@ from ai.booking import (
     BookingEngine,
     BookingKind,
     BookingOutcome,
+    RequestDraft,
     ScheduleProvider,
-    request_summary_reply,
+    render_request_reply,
+    summarize_request,
 )
 from ai.classifier import Classification, Intent, MessageClassifier, Priority
 from ai.context import BusinessKnowledge, HistoryTurn
@@ -83,6 +85,9 @@ class PipelineResult:
     # Шаблон для частного случая причины (отмена записи, нет окон, переспрос…);
     # None — шаблон причины из _SAFE_REPLIES.
     reply_override: str | None = None
+    # Вне ТЗ (§22): заявка на запись без брони — сохраняется для администратора
+    # (message_service → booking_request_service) и видна в «Записях».
+    booking_request: RequestDraft | None = None
     # Владелец выключил автоответы: клиенту не уходит ничего, даже шаблон.
     client_reply_allowed: bool = True
 
@@ -131,6 +136,8 @@ class PipelineResult:
             payload["validation"] = self.validation.as_dict()
         if self.booking:
             payload["booking"] = self.booking.as_dict()
+        if self.booking_request:
+            payload["booking_request"] = self.booking_request.as_dict()
         return payload
 
 
@@ -240,12 +247,15 @@ def _booking_dialog_texts(history: list[HistoryTurn], limit: int = 4) -> list[st
     return list(reversed(texts))
 
 
-def _booking_summary(knowledge: BusinessKnowledge, texts: list[str]) -> str | None:
+def _booking_services(knowledge: BusinessKnowledge) -> list[BookableService]:
+    return [BookableService(i, s.name) for i, s in enumerate(knowledge.services, 1)]
+
+
+def _booking_draft(knowledge: BusinessKnowledge, texts: list[str]) -> RequestDraft | None:
     """Заявка по словам клиента (услуги и мастера — только из данных компании)."""
-    services = [BookableService(i, s.name) for i, s in enumerate(knowledge.services, 1)]
     masters = list(enumerate(knowledge.masters, 1))
     today = knowledge.today or date.today()
-    return request_summary_reply(texts, today, services, masters)
+    return summarize_request(texts, today, _booking_services(knowledge), masters)
 
 
 def _last_ai_text(history: list[HistoryTurn]) -> str | None:
@@ -340,7 +350,7 @@ class AIPipeline:
             normalized, classification, knowledge, schedule
         ):
             return self._handle_booking(
-                normalized, history, classification, schedule, elapsed, knowledge.address
+                normalized, history, classification, schedule, elapsed, knowledge
             )
 
         # Клиент отвечает на вопрос о заявке («завтра в 15», «на бороду») — это
@@ -350,7 +360,7 @@ class AIPipeline:
             and not classification.action_not_allowed
             and classification.intent not in (Intent.COMPLAINT, Intent.SPAM)
             and _awaiting_booking_details(history)
-            and _booking_summary(knowledge, [normalized]) is not None
+            and _booking_draft(knowledge, [normalized]) is not None
         ):
             classification = replace(
                 classification,
@@ -398,9 +408,18 @@ class AIPipeline:
                 return escalate(EscalationReason.HOT_LEAD_CONFIRMATION, REPLY_CANCEL)
             # Расписания нет: повторяем, что поняли (услуга, день, время), и
             # спрашиваем недостающее; свободно ли время — проверит администратор.
-            return escalate(
-                EscalationReason.HOT_LEAD_CONFIRMATION,
-                _booking_summary(knowledge, [*_booking_dialog_texts(history), normalized]),
+            # Заявка сохраняется для «Записей», даже если деталей пока нет.
+            draft = _booking_draft(knowledge, [*_booking_dialog_texts(history), normalized])
+            reply = (
+                render_request_reply(
+                    draft, knowledge.today or date.today(), _booking_services(knowledge)
+                )
+                if draft
+                else None
+            )
+            return replace(
+                escalate(EscalationReason.HOT_LEAD_CONFIRMATION, reply),
+                booking_request=draft or RequestDraft(),
             )
 
         # Человек нужен ещё до генерации: жалоба, спам, ошибка API, запрос вне
@@ -514,10 +533,10 @@ class AIPipeline:
         classification: Classification,
         schedule: ScheduleProvider,
         elapsed,
-        address: str | None = None,
+        knowledge: BusinessKnowledge,
     ) -> PipelineResult:
         started = time.monotonic()
-        outcome = self._booking.handle(normalized, history, schedule, address=address)
+        outcome = self._booking.handle(normalized, history, schedule, address=knowledge.address)
         classification = replace(
             classification,
             intent=Intent.BOOKING,
@@ -535,6 +554,11 @@ class AIPipeline:
                 latency_ms=elapsed(),
                 booking=outcome,
                 reply_override=REPLY_NO_SLOTS,
+                # Окон нет — заявка остаётся администратору в «Записях».
+                booking_request=_booking_draft(
+                    knowledge, [*_booking_dialog_texts(history), normalized]
+                )
+                or RequestDraft(),
             )
         response = GeneratedResponse(
             text=outcome.reply,

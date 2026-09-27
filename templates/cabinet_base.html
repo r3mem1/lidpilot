@@ -32,6 +32,7 @@
             <a class="nav-link" href="/cabinet/{{ business_id }}{{ item.path }}"{% if item.key == active %} aria-current="page"{% endif %}>
               <span>{{ item.label }}</span>
               {% if item.key == 'messages' and attention_count %}<span class="nav-count" title="Требуют внимания">{{ attention_count }}</span>{% endif %}
+              {% if item.key == 'bookings' and requests_count %}<span class="nav-count" title="Заявки на запись">{{ requests_count }}</span>{% endif %}
             </a>
           {% endfor %}
         </div>

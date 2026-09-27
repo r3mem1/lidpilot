@@ -50,6 +50,7 @@ from models import (
 )
 from services import (
     analytics_service,
+    booking_request_service,
     booking_service,
     business_service,
     integration_service,
@@ -224,6 +225,12 @@ def render(
         "active": active,
         "title": title,
         "attention_count": analytics_service.attention_count(db, ctx.business_id),
+        # Вне ТЗ (§22): открытые заявки на запись — счётчик у «Записей» для сотрудников.
+        "requests_count": (
+            booking_request_service.count_open(db, ctx.business_id)
+            if master_service.is_staff(ctx)
+            else 0
+        ),
         # Этап 8: тариф и срок — баннер об окончании срока на всех страницах кабинета.
         "subscription": subscription_service.subscription_info(db, ctx.business_id),
         **data,
@@ -752,6 +759,31 @@ def bookings_page(
         for b in rows
     ]
 
+    # Вне ТЗ (§22): заявки на запись, которые AI понял, но не забронировал сам.
+    requests = []
+    if is_staff:
+        weekdays = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+        parts = {"morning": "утром", "day": "днём", "evening": "вечером"}
+        for r in booking_request_service.list_open(db, ctx):
+            when = []
+            if r.desired_day:
+                when.append(f"{r.desired_day:%d.%m} ({weekdays[r.desired_day.weekday()]})")
+            if r.desired_time:
+                when.append(f"{r.desired_time:%H:%M}")
+            elif r.part_of_day:
+                when.append(parts.get(r.part_of_day, ""))
+            requests.append(
+                {
+                    "request": r,
+                    "when": ", ".join(when),
+                    "service": service_names.get(r.service_id or 0),
+                    "master": master_names.get(r.master_id or 0),
+                    "created": _local(r.created_at, tz),
+                    "day": r.desired_day.isoformat() if r.desired_day else "",
+                    "time": f"{r.desired_time:%H:%M}" if r.desired_time else "",
+                }
+            )
+
     slots: list = []
     slot_service_id = _int_or_none(slot_service)
     chosen_day = _parse_day(slot_day)
@@ -769,6 +801,7 @@ def bookings_page(
         "bookings",
         "Записи" if is_staff else "Мои записи",
         items=items,
+        requests=requests,
         masters=masters,
         services=[s for s in services if s.active],
         is_staff=is_staff,

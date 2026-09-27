@@ -673,6 +673,9 @@ class BookingCreate(BaseModel):
     start_time: time
     client_name: str = Field(min_length=1, max_length=255)
     comment: str | None = Field(default=None, max_length=1000)
+    # Вне ТЗ (§22): запись по заявке клиента — привязка к его диалогу, клиенту
+    # уходит «Готово, вы записаны», заявка закрывается.
+    request_id: int | None = Field(default=None, ge=1)
 
 
 class BookingOut(ORMModel):

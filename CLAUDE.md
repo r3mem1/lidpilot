@@ -48,7 +48,7 @@ templates/ static/   кабинет (Jinja2)
 | 6 Admin-панель (`/admin`: обзор, компании, статус/тариф/trial, события, метрики, MRR) | ✅ реализован, `smoke_test_stage6.py`, `scripts/e2e_admin.py` |
 | 7 Первый пилот | 🔄 в работе: прод на Render + Supabase, бэкап и restore-drill, Sentry (`monitoring.py`), срок хранения `system_logs`, эксплуатация — `docs/operations.md`; осталось — webhook на проде, 1–3 компании, приёмка §21 на проде |
 | 8 SaaS-автоматизация (без платежей: оплата по счёту, продление в `/admin`) | ✅ реализован: срок подписки выключает AI (`services/subscription_service.py`), баннеры, блок «Тариф», чек-лист onboarding (`services/onboarding_service.py`), `smoke_test_stage8.py` |
-| Вне ТЗ (§22): мастера и запись | ✅ роль MASTER, смены по датам, записи, AI-бронь по расписанию (`ai/booking.py`, время только из БД), уведомления мастеру; `routes/bookings.py`, `smoke_test_stage10.py` |
+| Вне ТЗ (§22): мастера и запись | ✅ роль MASTER, смены по датам, записи, AI-бронь по расписанию (`ai/booking.py`, время только из БД), уведомления мастеру; заявки без брони в «Записях» (`booking_requests`, `services/booking_request_service.py`); `routes/bookings.py`, `smoke_test_stage10.py` |
 | 9 Масштабирование | ✅ канал VK (`integrations/vk.py`, `/webhooks/vk`), общий контракт каналов `integrations/base.py`, rate limit в общей БД (`rate_limit_counters`), `smoke_test_stage9.py` |
 
 Не выходить за границы текущего этапа: не добавлять функции из «Не входит в MVP» (§19) — календарь, биллинг, несколько каналов, мобильное приложение.
@@ -68,7 +68,7 @@ python smoke_test_stage6.py            # 134 проверки этапа 6
 python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
 python smoke_test_stage8.py            # 43 проверки этапа 8 (подписка, onboarding + шаг «запись к мастерам»)
 python smoke_test_stage9.py            # 71 проверка этапа 9 (VK, rate limit в БД)
-python smoke_test_stage10.py           # 123 проверки: мастера, расписание, записи, AI-запись (выбор мастера), уведомления
+python smoke_test_stage10.py           # 136 проверок: мастера, расписание, записи, AI-запись, заявки без брони, уведомления
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
