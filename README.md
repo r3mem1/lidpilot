@@ -61,7 +61,7 @@ uvicorn main:app --reload     # http://127.0.0.1:8000/docs
 ```bash
 pip install httpx
 python smoke_test.py       # 80 проверок этапа 1: роли, изоляция компаний, аудит, rate limit
-python smoke_test_ai.py    # 151 проверка этапа 2: классификация, валидатор, эскалации, логи
+python smoke_test_ai.py    # 155 проверок этапа 2: классификация, валидатор, эскалации, логи
 python smoke_test_stage3.py  # 149 проверок этапа 3: webhook, идемпотентность, сбои, изоляция
 python smoke_test_stage4.py  # 121 проверка этапа 4: лиды, ручной ответ, «решено», клиенты
 python smoke_test_stage5.py  # 181 проверка этапа 5: страницы и роли, XSS/CSRF/CSP, команда, аналитика

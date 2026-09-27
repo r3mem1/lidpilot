@@ -186,6 +186,21 @@ _AGREE_RE = re.compile(
     r"^\s*(?:да|давайте|давай|подходит|согласен|согласна|ок|окей|хорошо|записывайте|запишите)\b",
     re.IGNORECASE,
 )
+# «через 2 дня», «через три дня», «через день».
+_IN_DAYS_RE = re.compile(
+    r"через\s+(\d{1,2}|один|одн|два|две|три|четыр|пять|шест|сем)\w*\s+(?:дн|ден)"
+)
+_NUMBER_WORDS = {
+    "оди": 1,
+    "одн": 1,
+    "два": 2,
+    "две": 2,
+    "три": 3,
+    "чет": 4,
+    "пят": 5,
+    "шес": 6,
+    "сем": 7,
+}
 # Клиенту всё равно, к какому мастеру: AI выбирает наименее загруженного в этот день.
 _ANY_MASTER_RE = re.compile(
     r"без\s+разниц|не\s*важно|вс[её]\s+равно|кто\s+свободн|на\s+ваш\s+выбор"
@@ -234,6 +249,14 @@ def _parse_day(text: str, today: date) -> date | None:
     lowered = text.lower().replace("ё", "е")
     if "послезавтра" in lowered:
         return today + timedelta(days=2)
+    after = _IN_DAYS_RE.search(lowered)
+    if after:
+        amount = after.group(1)
+        days = int(amount) if amount.isdigit() else _NUMBER_WORDS.get(amount[:3], 1)
+        if 0 < days <= HORIZON_DAYS * 4:
+            return today + timedelta(days=days)
+    if re.search(r"через\s+неделю", lowered):
+        return today + timedelta(days=7)
     if "завтра" in lowered:
         return today + timedelta(days=1)
     if "сегодня" in lowered:
@@ -692,3 +715,77 @@ class BookingEngine:
             offered=tuple(options),
             source=source,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Заявка без расписания: AI понимает запрос и повторяет его клиенту
+# --------------------------------------------------------------------------- #
+# Решение заказчика 2026-09-28: даже без подключённого расписания AI должен понять,
+# на какую услугу, какой день и время просит клиент («завтра на 15» → 29.09 в 15:00),
+# и повторить это. Свободно ли время, AI не утверждает — это проверяет администратор.
+BOOKING_REQUEST_PREFIX = "Приняли заявку на запись"
+_PART_WORDS = {"morning": "утром", "day": "днём", "evening": "вечером"}
+
+
+def _day_phrase(day: date, today: date) -> str:
+    if day == today:
+        return f"сегодня, {day:%d.%m}"
+    if day == today + timedelta(days=1):
+        return f"завтра, {day:%d.%m}"
+    if day == today + timedelta(days=2):
+        return f"послезавтра, {day:%d.%m}"
+    return f"{_WEEKDAY_ACC[day.weekday()]}, {day:%d.%m}"
+
+
+def _join_ru(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " и " + items[-1]
+
+
+def request_summary_reply(
+    texts: list[str],
+    today: date,
+    services: list[BookableService],
+    masters: list[tuple[int, str]],
+) -> str | None:
+    """Ответ на просьбу о записи, когда расписания нет: что понято из сообщений
+    клиента (от старых к новым, новые уточняют старые) и чего не хватает.
+    None — в сообщениях нет ни услуги, ни дня, ни времени."""
+    service_id: int | None = None
+    master_id: int | None = None
+    day: date | None = None
+    at: time | None = None
+    part: str | None = None
+    for text in texts:
+        found = parse_by_rules(text, today, services, masters)
+        service_id = found.service_id or service_id
+        master_id = found.master_id or master_id
+        day = found.day or day
+        at = found.at or at
+        part = found.part_of_day or part
+    if not any((service_id, master_id, day, at, part)):
+        return None
+    if service_id is None and len(services) == 1:
+        service_id = services[0].id  # услуга одна — переспрашивать незачем
+
+    names = {s.id: s.name for s in services}
+    known: list[str] = []
+    if service_id is not None:
+        known.append(f"«{names[service_id]}»")
+    if master_id is not None:
+        known.append(f"мастер {dict(masters)[master_id]}")
+    moment = f"в {at:%H:%M}" if at is not None else (_PART_WORDS[part] if part else "")
+    when = ", ".join(x for x in (_day_phrase(day, today) if day else "", moment) if x)
+    if when:
+        known.append(when)
+
+    missing: list[str] = []
+    if service_id is None and services:
+        missing.append("на какую услугу записать (есть: " + ", ".join(names.values()) + ")")
+    if day is None:
+        missing.append("на какой день")
+    if at is None:
+        missing.append("во сколько именно" if part else "на какое время")
+    head = f"{BOOKING_REQUEST_PREFIX}: {', '.join(known)}."
+    if missing:
+        return f"{head} Уточните, пожалуйста, {_join_ru(missing)} — администратор подтвердит запись здесь."
+    return f"{head} Администратор проверит, свободно ли это время, и подтвердит запись здесь."

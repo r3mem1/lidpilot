@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -34,7 +35,7 @@ from schemas import (
     ServiceCreate,
     ServiceUpdate,
 )
-from services import admin_service, audit_service, master_service
+from services import admin_service, audit_service, master_service, schedule_service
 from services.access_service import BusinessContext
 from services.auth_service import get_user_by_email
 
@@ -276,4 +277,5 @@ def build_ai_context(db: Session, business: Business) -> BusinessKnowledge:
         masters=tuple(masters),
         tone=business.ai_tone.value,
         auto_reply=business.ai_auto_reply,
+        today=datetime.now(schedule_service.business_tz(business)).date(),
     )

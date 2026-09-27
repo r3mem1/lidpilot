@@ -959,10 +959,14 @@ with TestClient(app) as c:
     c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"booking_enabled": False})
     reply = say(507, f"Хочу записаться на стрижку {d1} в 11:30")
     check(
-        "AI-запись выключена → как раньше: менеджеру, без брони",
+        "AI-запись выключена → заявка «Стрижка … 11:30» менеджеру, без брони и без «записаны»",
         not bookings_of(507)
         and conv_state(507)["attention_reason"] == "HOT_LEAD_CONFIRMATION"
-        and "11:30" not in reply,
+        and "Приняли заявку" in reply
+        and "«Стрижка»" in reply
+        and "11:30" in reply
+        and "вы записаны" not in reply,
+        reply,
     )
     c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"booking_enabled": True})
 

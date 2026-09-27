@@ -67,7 +67,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 from ai.llm_client import LLMResult, LLMUnavailable  # noqa: E402
 from ai.pipeline import (  # noqa: E402
     REPLY_RECEIVED,
-    REPLY_REPEAT,
     REPLY_SPAM,
     REPLY_STAFF_WILL_ANSWER,
     AIPipeline,
@@ -545,10 +544,12 @@ with TestClient(app) as c:
     )
     sent = fake.sent(TOKEN_A)
     check(
-        "клиенту ушёл безопасный ответ (без обещания времени)",
+        "клиенту ушла заявка: понятый день, вопрос об услуге и времени, без «вы записаны»",
         len(sent) == sent_before + 1
+        and "Приняли заявку" in sent[-1]["text"]
+        and "завтра" in sent[-1]["text"]
         and "подтвердит" in sent[-1]["text"]
-        and not any(ch.isdigit() for ch in sent[-1]["text"]),
+        and "вы записаны" not in sent[-1]["text"],
         sent[-1]["text"],
     )
     air = db_rows("SELECT * FROM ai_responses WHERE message_id = ?", mid)[0]
@@ -562,9 +563,10 @@ with TestClient(app) as c:
     c.post(hook_url, json=update(21, 1002, "А можно записаться на 18:00?"), headers=H_A)
     # Решение 2026-09-27: ответ на каждое сообщение; повтор шаблона — коротко.
     check(
-        "повторная эскалация: клиент получает короткий ответ, а не тот же шаблон",
+        "уточнение «на 18:00» дополняет заявку: день из прошлого сообщения + время",
         len(fake.sent(TOKEN_A)) == sent_before + 2
-        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_REPEAT,
+        and "завтра" in fake.sent(TOKEN_A)[-1]["text"]
+        and "18:00" in fake.sent(TOKEN_A)[-1]["text"],
         fake.sent(TOKEN_A)[-1]["text"],
     )
     mid2 = last_message_id(1002, biz_a)

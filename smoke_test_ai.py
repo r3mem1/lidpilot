@@ -17,6 +17,7 @@ import pathlib
 import sqlite3
 import sys
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -919,6 +920,56 @@ res = AIPipeline(
 check(
     "BOOKING не уходит в переспрос даже при unclear",
     res.escalation_reason is EscalationReason.HOT_LEAD_CONFIRMATION,
+)
+
+# Заявка без расписания (решение 2026-09-28): AI понимает услугу, день и время.
+TODAY_K = date(2026, 9, 28)
+KNOW_T = replace(KNOWLEDGE, today=TODAY_K)
+res = AIPipeline().process("здравствуйте можете меня записать на стрижку завтра на 15", KNOW_T)
+check(
+    "«на стрижку завтра на 15» → «Стрижка», завтра 29.09, 15:00, админ проверит",
+    res.escalation_reason is EscalationReason.HOT_LEAD_CONFIRMATION
+    and res.safe_reply is not None
+    and "«Стрижка»" in res.safe_reply
+    and "29.09" in res.safe_reply
+    and "15:00" in res.safe_reply
+    and "проверит" in res.safe_reply,
+    str(res.safe_reply),
+)
+first = AIPipeline().process("Хочу записаться", KNOW_T)
+dialog = [
+    HistoryTurn(role=HistoryRole.CUSTOMER, text="Хочу записаться"),
+    HistoryTurn(role=HistoryRole.AI, text=first.safe_reply or ""),
+]
+res = AIPipeline().process("на бороду через 2 дня в 11", KNOW_T, dialog)
+check(
+    "уточнение без слова «запись» после вопроса → заявка с услугой, датой и временем",
+    res.escalation_reason is EscalationReason.HOT_LEAD_CONFIRMATION
+    and res.safe_reply is not None
+    and "«Борода»" in res.safe_reply
+    and "30.09" in res.safe_reply
+    and "11:00" in res.safe_reply,
+    str(res.safe_reply),
+)
+res = AIPipeline().process("запишите на стрижку в пятницу", KNOW_T)
+check(
+    "не хватает времени → AI спрашивает время, остальное повторяет",
+    res.safe_reply is not None and "02.10" in res.safe_reply and "на какое время" in res.safe_reply,
+    str(res.safe_reply),
+)
+dialog2 = [
+    HistoryTurn(role=HistoryRole.CUSTOMER, text="запишите на стрижку в пятницу"),
+    HistoryTurn(role=HistoryRole.AI, text=res.safe_reply or ""),
+]
+res = AIPipeline().process("в 12:30", KNOW_T, dialog2)
+check(
+    "ответ «в 12:30» дополняет заявку: услуга и день из прошлого сообщения",
+    res.safe_reply is not None
+    and "«Стрижка»" in res.safe_reply
+    and "02.10" in res.safe_reply
+    and "12:30" in res.safe_reply
+    and "проверит" in res.safe_reply,
+    str(res.safe_reply),
 )
 res = AIPipeline().process("Сколько стоит стрижка?", KNOWLEDGE)
 check(

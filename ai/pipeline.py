@@ -17,13 +17,17 @@ import logging
 import re
 import time
 from dataclasses import dataclass, replace
+from datetime import date
 
 from ai.booking import (
     BOOKING_PROMPT_VERSION,
+    BOOKING_REQUEST_PREFIX,
+    BookableService,
     BookingEngine,
     BookingKind,
     BookingOutcome,
     ScheduleProvider,
+    request_summary_reply,
 )
 from ai.classifier import Classification, Intent, MessageClassifier, Priority
 from ai.context import BusinessKnowledge, HistoryTurn
@@ -208,6 +212,42 @@ def safe_reply_for(reason: EscalationReason) -> str | None:
     return _SAFE_REPLIES.get(reason)
 
 
+def _is_booking_request_reply(text: str | None) -> bool:
+    return bool(text) and (text == REPLY_BOOKING_REQUEST or text.startswith(BOOKING_REQUEST_PREFIX))
+
+
+def _awaiting_booking_details(history: list[HistoryTurn]) -> bool:
+    """Последний ответ AI — просьба уточнить заявку на запись."""
+    return _is_booking_request_reply(_last_ai_text(history))
+
+
+def _booking_dialog_texts(history: list[HistoryTurn], limit: int = 4) -> list[str]:
+    """Прежние сообщения клиента в текущей заявке на запись (от старых к новым):
+    идём назад, пока ответы AI — про эту заявку; ответ менеджера или другой ответ
+    AI завершает заявку, чтобы не подмешать старые просьбы."""
+    texts: list[str] = []
+    for turn in reversed(history):
+        if turn.role.value == "CUSTOMER":
+            texts.append(turn.text)
+            if len(texts) == limit:
+                break
+        elif turn.role.value == "AI" and (
+            turn.text == REPLY_REPEAT or _is_booking_request_reply(turn.text)
+        ):
+            continue
+        else:
+            break
+    return list(reversed(texts))
+
+
+def _booking_summary(knowledge: BusinessKnowledge, texts: list[str]) -> str | None:
+    """Заявка по словам клиента (услуги и мастера — только из данных компании)."""
+    services = [BookableService(i, s.name) for i, s in enumerate(knowledge.services, 1)]
+    masters = list(enumerate(knowledge.masters, 1))
+    today = knowledge.today or date.today()
+    return request_summary_reply(texts, today, services, masters)
+
+
 def _last_ai_text(history: list[HistoryTurn]) -> str | None:
     """Текст последнего содержательного ответа AI клиенту — чтобы не переспрашивать
     дважды подряд. Короткий REPLY_REPEAT пропускается; ответ менеджера сбрасывает."""
@@ -303,6 +343,24 @@ class AIPipeline:
                 normalized, history, classification, schedule, elapsed, knowledge.address
             )
 
+        # Клиент отвечает на вопрос о заявке («завтра в 15», «на бороду») — это
+        # продолжение записи, даже если в сообщении нет слова «запись».
+        if (
+            classification.intent is not Intent.BOOKING
+            and not classification.action_not_allowed
+            and classification.intent not in (Intent.COMPLAINT, Intent.SPAM)
+            and _awaiting_booking_details(history)
+            and _booking_summary(knowledge, [normalized]) is not None
+        ):
+            classification = replace(
+                classification,
+                intent=Intent.BOOKING,
+                priority=Priority.HOT,
+                needs_manager=True,
+                unclear=False,
+                reason=f"{classification.reason}; уточнение заявки на запись",
+            )
+
         def escalate(
             reason: EscalationReason, override: str | None = None, detail: str | None = None
         ) -> PipelineResult:
@@ -338,7 +396,12 @@ class AIPipeline:
         if classification.intent is Intent.BOOKING and not classification.action_not_allowed:
             if _CANCEL_RE.search(normalized):
                 return escalate(EscalationReason.HOT_LEAD_CONFIRMATION, REPLY_CANCEL)
-            return escalate(EscalationReason.HOT_LEAD_CONFIRMATION)
+            # Расписания нет: повторяем, что поняли (услуга, день, время), и
+            # спрашиваем недостающее; свободно ли время — проверит администратор.
+            return escalate(
+                EscalationReason.HOT_LEAD_CONFIRMATION,
+                _booking_summary(knowledge, [*_booking_dialog_texts(history), normalized]),
+            )
 
         # Человек нужен ещё до генерации: жалоба, спам, ошибка API, запрос вне
         # прав AI, нет данных (раздел 6.7). Клиент получает шаблон своей причины.

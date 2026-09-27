@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 
 
@@ -80,6 +81,8 @@ class BusinessKnowledge:
     # Настройки владельца (раздел 13): стиль ответа и разрешение отвечать автоматически.
     tone: str = "FRIENDLY"
     auto_reply: bool = True
+    # «Сегодня» в часовом поясе компании: AI понимает «завтра», «в пятницу» от этой даты.
+    today: date | None = None
 
     # ------------------------------------------------------------------ #
     # Представление для промпта
