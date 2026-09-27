@@ -32,6 +32,7 @@ os.environ.update(
     AI_PROVIDER="stub",
     PUBLIC_BASE_URL="https://leadpilot.test",
     REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания
     TELEGRAM_MAX_RETRIES="2",
     BOOTSTRAP_ADMIN_EMAIL="admin@example.com",
     BOOTSTRAP_ADMIN_PASSWORD="Adm1n-Pass-123!",

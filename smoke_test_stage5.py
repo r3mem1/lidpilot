@@ -33,6 +33,7 @@ os.environ.update(
     AI_PROVIDER="stub",
     PUBLIC_BASE_URL="https://leadpilot.test",
     REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания
     AUTH_RATE_LIMIT_ATTEMPTS="1000",  # тест делает десятки входов подряд
     BOOTSTRAP_ADMIN_EMAIL="admin@example.com",
     BOOTSTRAP_ADMIN_PASSWORD="Adm1n-Pass-123!",
@@ -283,13 +284,16 @@ with TestClient(app) as c:
         "SELECT * FROM ai_responses WHERE message_id = (SELECT id FROM messages WHERE conversation_id = ? AND sender_type='CUSTOMER')",
         conv10,
     )[0]
+    # Решение 2026-09-27: автоответы выключены — клиенту не уходит ничего, даже шаблон.
     check(
-        "автоответ выключен: ассистент не отвечает по существу",
-        "1500" not in fake.sent(TOKEN_A)[-1]["text"] and len(fake.sent(TOKEN_A)) == sent_before + 1,
+        "автоответ выключен: клиенту ничего не отправлено",
+        len(fake.sent(TOKEN_A)) == sent_before,
     )
     check(
-        "автоответ выключен: клиент получил короткое «сотрудник ответит»",
-        "сотрудник" in fake.sent(TOKEN_A)[-1]["text"],
+        "автоответ выключен: исходящих сообщений AI в диалоге нет",
+        not db_rows(
+            "SELECT id FROM messages WHERE conversation_id = ? AND sender_type = 'AI'", conv10
+        ),
     )
     check(
         "автоответ выключен: диалог у менеджера, причина AUTO_REPLY_DISABLED",

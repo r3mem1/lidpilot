@@ -37,6 +37,7 @@ os.environ.update(
     AI_PREVIEW_ENABLED="true",
     PUBLIC_BASE_URL="https://leadpilot.test",
     REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания
     SYSTEM_LOGS_PURGE_INTERVAL_HOURS="0",
     AUTH_RATE_LIMIT_ATTEMPTS="1000",
     BOOTSTRAP_ADMIN_EMAIL="admin@example.com",
@@ -50,6 +51,7 @@ sys.path.insert(0, str(BASE))
 import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from ai.pipeline import REPLY_STAFF_WILL_ANSWER  # noqa: E402
 from integrations.telegram import TelegramClient  # noqa: E402
 from main import app  # noqa: E402
 from services import integration_service  # noqa: E402
@@ -285,11 +287,16 @@ with TestClient(app) as c:
     before = len(fake.sent(TOKEN_A))
     r = c.post("/webhooks/telegram", json=upd(102, "Сколько стоит стрижка?"), headers=HOOK_A)
     check("webhook отвечает 200 (Telegram не повторяет)", r.status_code == 200)
-    check("клиенту ничего не отправлено", len(fake.sent(TOKEN_A)) == before)
+    # Решение 2026-09-27: AI не запускается, но клиент получает шаблон.
+    check(
+        "клиенту шаблон «сотрудник ответит», без цены (AI не запускался)",
+        len(fake.sent(TOKEN_A)) == before + 1
+        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_STAFF_WILL_ANSWER,
+    )
     msg = db_rows(
         "SELECT m.id, m.processing_status, m.processing_error, m.conversation_id FROM messages m "
         "JOIN conversations cv ON cv.id = m.conversation_id JOIN customers cu ON cu.id = cv.customer_id "
-        "WHERE cu.external_id = '102' ORDER BY m.id"
+        "WHERE cu.external_id = '102' AND m.sender_type = 'CUSTOMER' ORDER BY m.id"
     )
     check(
         "сообщение сохранено и обработано", len(msg) == 1 and msg[0]["processing_status"] == "DONE"
@@ -331,7 +338,7 @@ with TestClient(app) as c:
     )
     check(
         "менеджер отвечает вручную при истёкшем сроке",
-        r.status_code == 201 and len(fake.sent(TOKEN_A, 102)) == 1,
+        r.status_code == 201 and len(fake.sent(TOKEN_A, 102)) == 2,
         str(r.status_code),
     )
 
@@ -380,7 +387,11 @@ with TestClient(app) as c:
     c.put(f"/admin/businesses/{biz_a}/plan", headers=HA, json={"status": "CANCELED"})
     before = len(fake.sent(TOKEN_A))
     c.post("/webhooks/telegram", json=upd(104, "Сколько стоит стрижка?"), headers=HOOK_A)
-    check("отменённая подписка — AI не отвечает", len(fake.sent(TOKEN_A)) == before)
+    check(
+        "отменённая подписка — AI не отвечает, только шаблон",
+        len(fake.sent(TOKEN_A)) == before + 1
+        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_STAFF_WILL_ANSWER,
+    )
     c.put(f"/admin/businesses/{biz_a}/plan", headers=HA, json={"status": "ACTIVE"})
     set_expires(biz_a, None)
     c.post("/webhooks/telegram", json=upd(105, "Сколько стоит стрижка?"), headers=HOOK_A)

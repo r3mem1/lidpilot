@@ -34,6 +34,7 @@ os.environ.update(
     ENVIRONMENT="development",
     AI_PROVIDER="stub",
     REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания
     SENTRY_DSN="https://publickey@sentry.invalid/1",
     SENTRY_TRACES_SAMPLE_RATE="0",
     SYSTEM_LOGS_PURGE_INTERVAL_HOURS="0",  # очистку вызываем явно, без фонового цикла

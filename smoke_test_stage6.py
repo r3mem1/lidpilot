@@ -34,6 +34,7 @@ os.environ.update(
     AI_PROVIDER="stub",
     PUBLIC_BASE_URL="https://leadpilot.test",
     REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания
     AUTH_RATE_LIMIT_ATTEMPTS="1000",  # тест делает десятки входов подряд
     BOOTSTRAP_ADMIN_EMAIL="admin@example.com",
     BOOTSTRAP_ADMIN_PASSWORD="Adm1n-Pass-123!",
@@ -46,6 +47,7 @@ sys.path.insert(0, str(BASE))
 import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from ai.pipeline import REPLY_STAFF_WILL_ANSWER  # noqa: E402
 from config import settings  # noqa: E402
 from integrations.telegram import TelegramClient  # noqa: E402
 from main import app  # noqa: E402
@@ -424,7 +426,9 @@ with TestClient(app) as c:
 
     # ----------------------------------------------------------------------- #
     print("\n=== 4. Статус компании: suspended останавливает AI, но не теряет сообщение ===")
-    n_msgs = len(db_rows("SELECT id FROM messages WHERE business_id = ?", biz_a))
+    n_msgs = len(
+        db_rows("SELECT id FROM messages WHERE business_id = ? AND sender_type = 'CUSTOMER'", biz_a)
+    )
     sent_before = len(fake.sent(TOKEN_A))
     n_status_ev = len(events("ADMIN_BUSINESS_STATUS_CHANGED"))
     r = keep(c.put(f"/admin/businesses/{biz_a}/status", headers=HA, json={"status": "SUSPENDED"}))
@@ -456,11 +460,18 @@ with TestClient(app) as c:
     )[0]
     check(
         "приостановленная компания: сообщение сохранено (не теряется, §18)",
-        len(db_rows("SELECT id FROM messages WHERE business_id = ?", biz_a)) == n_msgs + 1,
+        len(
+            db_rows(
+                "SELECT id FROM messages WHERE business_id = ? AND sender_type = 'CUSTOMER'",
+                biz_a,
+            )
+        )
+        == n_msgs + 1,
     )
     check(
-        "…но AI не отвечает и клиенту ничего не уходит",
-        len(fake.sent(TOKEN_A)) == sent_before
+        "…AI не запускается, клиенту шаблон «сотрудник ответит» (решение 2026-09-27)",
+        len(fake.sent(TOKEN_A)) == sent_before + 1
+        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_STAFF_WILL_ANSWER
         and conv["status"] == "NEEDS_ATTENTION"
         and conv["attention_reason"] == "BUSINESS_SUSPENDED",
         str(dict(conv)),
@@ -492,7 +503,8 @@ with TestClient(app) as c:
     say(4005, "Сколько стоит стрижка?", HOOK_A)
     check(
         "после возврата в ACTIVE AI отвечает снова",
-        len(fake.sent(TOKEN_A)) == sent_before + 1
+        len(fake.sent(TOKEN_A)) == sent_before + 2
+        and fake.sent(TOKEN_A)[-1]["text"] != REPLY_STAFF_WILL_ANSWER
         and db_rows("SELECT status FROM businesses WHERE id = ?", biz_a)[0]["status"] == "ACTIVE",
     )
     check(

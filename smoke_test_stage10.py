@@ -37,6 +37,7 @@ os.environ.update(
     AI_PROVIDER="stub",
     PUBLIC_BASE_URL="https://leadpilot.test",
     REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания
     SYSTEM_LOGS_PURGE_INTERVAL_HOURS="0",
     AUTH_RATE_LIMIT_ATTEMPTS="1000",
     BOOTSTRAP_ADMIN_EMAIL="admin@example.com",

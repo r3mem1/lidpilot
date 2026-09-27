@@ -63,6 +63,10 @@ class EventType:
     MESSAGE_PROCESSED: Final = "MESSAGE_PROCESSED"
     MESSAGE_SENT: Final = "MESSAGE_SENT"
     MESSAGE_SEND_FAILED: Final = "MESSAGE_SEND_FAILED"
+    # Решение 2026-09-27: ответ на каждое сообщение клиента
+    MESSAGE_MERGED: Final = "MESSAGE_MERGED"  # серия сообщений — один ответ на последнее
+    AUTO_REPLY_TEMPLATE: Final = "AUTO_REPLY_TEMPLATE"  # шаблонный ответ без AI
+    REPLY_WATCHDOG: Final = "REPLY_WATCHDOG"  # сообщение осталось без ответа — шаблон
     # Этап 9: клиент запретил/разрешил сообщения от сообщества (VK)
     CUSTOMER_CHANNEL_BLOCKED: Final = "CUSTOMER_CHANNEL_BLOCKED"
     CUSTOMER_CHANNEL_UNBLOCKED: Final = "CUSTOMER_CHANNEL_UNBLOCKED"

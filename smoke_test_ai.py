@@ -16,6 +16,7 @@ import os
 import pathlib
 import sqlite3
 import sys
+from dataclasses import replace
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -821,23 +822,103 @@ check(
     and res.reply_text is None,
 )
 
-# Безопасные ответы при эскалации (раздел 6.6, сценарий C раздела 7).
+# Безопасные ответы при эскалации (раздел 6.6, сценарий C раздела 7). Решение
+# 2026-09-27: ответ есть на каждую причину, кроме выключенных автоответов.
+from ai.context import HistoryRole, HistoryTurn  # noqa: E402
+from ai.pipeline import (  # noqa: E402
+    ALL_TEMPLATES,
+    REPLY_CANCEL,
+    REPLY_CLARIFY,
+    REPLY_REPEAT,
+    REPLY_SPAM,
+    REPLY_TEXT_ONLY,
+    REPLY_UNCLEAR_HANDOFF,
+)
+
 for reason in EscalationReason:
     text = safe_reply_for(reason)
     if text is None:
         check(
             f"безопасный ответ {reason.value}: клиенту не отправляется",
-            reason is EscalationReason.SPAM_SUSPECTED,
+            reason is EscalationReason.AUTO_REPLY_DISABLED,
         )
         continue
     check(
         f"безопасный ответ {reason.value}: проходит валидатор",
         validator.validate(response(text), KNOWLEDGE).ok,
     )
+check(
+    "все шаблоны ответов проходят валидатор (без цен, времени, обещаний записи)",
+    all(validator.validate(response(t), KNOWLEDGE).ok for t in ALL_TEMPLATES),
+    str([t for t in ALL_TEMPLATES if not validator.validate(response(t), KNOWLEDGE).ok]),
+)
 res = AIPipeline().process("Хочу записаться на завтра", KNOWLEDGE)
 check(
-    "эскалация BOOKING несёт безопасный ответ клиенту",
-    res.decision is Decision.ESCALATE and res.safe_reply and "подтвердит" in res.safe_reply,
+    "эскалация BOOKING: клиента просят назвать услугу и время, админ подтвердит",
+    res.decision is Decision.ESCALATE
+    and res.safe_reply is not None
+    and "подтвердит" in res.safe_reply
+    and "услугу" in res.safe_reply,
+)
+res = AIPipeline().process("Хочу отменить запись на завтра", KNOWLEDGE)
+check("отмена записи: свой шаблон про отмену/перенос", res.safe_reply == REPLY_CANCEL)
+res = AIPipeline().process("Заработок в крипте, инвестиции! t.me/x", KNOWLEDGE)
+check(
+    "спам: клиенту короткий нейтральный ответ (решение 2026-09-27)",
+    res.escalation_reason is EscalationReason.SPAM_SUSPECTED and res.safe_reply == REPLY_SPAM,
+)
+res = AIPipeline().process("   ", KNOWLEDGE)
+check("сообщение без текста: просим написать словами", res.safe_reply == REPLY_TEXT_ONLY)
+res = AIPipeline().process("Жалоба: мастер испортил стрижку", replace(KNOWLEDGE, auto_reply=False))
+check(
+    "автоответы выключены: даже на жалобу клиенту ничего не уходит",
+    res.decision is Decision.ESCALATE
+    and res.escalation_reason is EscalationReason.COMPLAINT
+    and res.safe_reply is None,
+)
+
+# Непонятный запрос: сначала переспрос, при повторе — «передаю администратору».
+unclear_llm = {
+    "intent": "OTHER",
+    "priority": "COLD",
+    "needs_manager": False,
+    "unclear": True,
+    "reason": "Непонятно, что нужно",
+}
+res = AIPipeline(FakeLLMClient(classify=unclear_llm)).process("ыва ыв", KNOWLEDGE)
+check(
+    "непонятный запрос: переспрашиваем, а не передаём сразу",
+    res.escalation_reason is EscalationReason.AMBIGUOUS_REQUEST and res.safe_reply == REPLY_CLARIFY,
+)
+asked = [
+    HistoryTurn(role=HistoryRole.CUSTOMER, text="ыва ыв"),
+    HistoryTurn(role=HistoryRole.AI, text=REPLY_CLARIFY),
+]
+res = AIPipeline(FakeLLMClient(classify=unclear_llm)).process("ну это", KNOWLEDGE, asked)
+check(
+    "непонятный запрос повторно: «передаю администратору»",
+    res.safe_reply == REPLY_UNCLEAR_HANDOFF,
+)
+handed = [
+    *asked,
+    HistoryTurn(role=HistoryRole.CUSTOMER, text="ну это"),
+    HistoryTurn(role=HistoryRole.AI, text=REPLY_UNCLEAR_HANDOFF),
+    HistoryTurn(role=HistoryRole.CUSTOMER, text="ааа"),
+    HistoryTurn(role=HistoryRole.AI, text=REPLY_REPEAT),
+]
+res = AIPipeline(FakeLLMClient(classify=unclear_llm)).process("эээ", KNOWLEDGE, handed)
+check(
+    "после «передаю» AI не начинает переспрашивать заново",
+    res.safe_reply == REPLY_UNCLEAR_HANDOFF,
+)
+res = AIPipeline(
+    FakeLLMClient(
+        classify={**unclear_llm, "intent": "BOOKING", "priority": "HOT"},
+    )
+).process("хочу к вам", KNOWLEDGE)
+check(
+    "BOOKING не уходит в переспрос даже при unclear",
+    res.escalation_reason is EscalationReason.HOT_LEAD_CONFIRMATION,
 )
 res = AIPipeline().process("Сколько стоит стрижка?", KNOWLEDGE)
 check(

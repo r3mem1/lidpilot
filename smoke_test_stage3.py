@@ -33,7 +33,8 @@ os.environ.update(
     ENVIRONMENT="development",
     AI_PROVIDER="stub",
     PUBLIC_BASE_URL="https://leadpilot.test",
-    REPROCESS_INTERVAL_SECONDS="0",  # sweeper вызывается в тестах вручную
+    REPROCESS_INTERVAL_SECONDS="0",
+    REPLY_DEBOUNCE_SECONDS="0",  # пауза серии сообщений — в тестах без ожидания  # sweeper вызывается в тестах вручную
     TELEGRAM_MAX_RETRIES="2",
     BOOTSTRAP_ADMIN_EMAIL="",
     BOOTSTRAP_ADMIN_PASSWORD="",
@@ -64,7 +65,13 @@ import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from ai.llm_client import LLMResult, LLMUnavailable  # noqa: E402
-from ai.pipeline import AIPipeline  # noqa: E402
+from ai.pipeline import (  # noqa: E402
+    REPLY_RECEIVED,
+    REPLY_REPEAT,
+    REPLY_SPAM,
+    REPLY_STAFF_WILL_ANSWER,
+    AIPipeline,
+)
 from config import settings  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from integrations import telegram  # noqa: E402
@@ -553,8 +560,12 @@ with TestClient(app) as c:
     )
     check("лог AI_ESCALATED привязан к сообщению", len(system_logs("AI_ESCALATED", mid)) == 1)
     c.post(hook_url, json=update(21, 1002, "А можно записаться на 18:00?"), headers=H_A)
+    # Решение 2026-09-27: ответ на каждое сообщение; повтор шаблона — коротко.
     check(
-        "повторная эскалация не спамит клиента шаблоном", len(fake.sent(TOKEN_A)) == sent_before + 1
+        "повторная эскалация: клиент получает короткий ответ, а не тот же шаблон",
+        len(fake.sent(TOKEN_A)) == sent_before + 2
+        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_REPEAT,
+        fake.sent(TOKEN_A)[-1]["text"],
     )
     mid2 = last_message_id(1002, biz_a)
     check(
@@ -570,7 +581,10 @@ with TestClient(app) as c:
         json=update(30, 1003, "Заработок в крипте без вложений, казино и ставки на спорт"),
         headers=H_A,
     )
-    check("спам: клиенту ничего не отправлено", len(fake.sent(TOKEN_A)) == sent_before)
+    check(
+        "спам: клиенту короткий нейтральный ответ (решение 2026-09-27)",
+        len(fake.sent(TOKEN_A)) == sent_before + 1 and fake.sent(TOKEN_A)[-1]["text"] == REPLY_SPAM,
+    )
     spam_conv = db_rows(
         "SELECT c.* FROM conversations c JOIN customers u ON u.id = c.customer_id "
         "WHERE u.external_id = '1003'"
@@ -584,7 +598,7 @@ with TestClient(app) as c:
     air = db_rows("SELECT * FROM ai_responses WHERE message_id = ?", last_message_id(1003, biz_a))[
         0
     ]
-    check("спам: ai_response без исходящего сообщения", air["response_message_id"] is None)
+    check("спам: ai_response связан с исходящим ответом", air["response_message_id"] is not None)
 
     c.post(
         hook_url,
@@ -766,9 +780,9 @@ with TestClient(app) as c:
     ai_service.reset_pipeline(None)
     mid = last_message_id(1008, biz_a)
     check(
-        "LLM недоступен: клиенту безопасный ответ",
+        "LLM недоступен: клиенту безопасный ответ «сообщение получили»",
         len(fake.sent(TOKEN_A)) == sent_before + 1
-        and "сотрудник" in fake.sent(TOKEN_A)[-1]["text"],
+        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_RECEIVED,
     )
     ai_err = system_logs("AI_ERROR", mid)
     check(
@@ -835,6 +849,11 @@ with TestClient(app) as c:
         conv["status"] == "NEEDS_ATTENTION" and conv["attention_reason"] == "PROCESSING_FAILED",
     )
     check("попытки исчерпаны: sweeper больше не берёт", idle == 0)
+    check(
+        "попытки исчерпаны: клиент всё равно получил «сообщение получили» (решение 2026-09-27)",
+        [b["text"] for b in fake.sent(TOKEN_A) if str(b["chat_id"]) == "1010"][-1:]
+        == [REPLY_RECEIVED],
+    )
 
     # 8.4  Атомарный захват: двух обработчиков одного сообщения не бывает.
     with SessionLocal() as db:
@@ -847,6 +866,82 @@ with TestClient(app) as c:
         second = message_service._claim(db2, fresh.message_id)
     check("_claim: первый захватывает, второй — нет", first is True and second is False)
     message_service._GRACE_SECONDS = 30
+
+    # ----------------------------------------------------------------------- #
+    print("\n=== 8.5 Серия сообщений — один ответ (решение 2026-09-27) ===")
+
+    def chat_texts(chat: str) -> list[str]:
+        return [b["text"] for b in fake.sent(TOKEN_A) if str(b["chat_id"]) == chat]
+
+    with SessionLocal() as db:
+        integration = db.query(Integration).filter(Integration.business_id == biz_a).one()
+        burst = [
+            message_service.receive_incoming(
+                db, integration, IncomingMessage("TELEGRAM", "1013", str(90 + i), t, "Ира", None)
+            ).message_id
+            for i, t in enumerate(["Здравствуйте", "Сколько стоит", "стрижка?"])
+        ]
+    # Паузу webhook имитируем обработкой после прихода всей серии.
+    for mid_b in burst:
+        message_service.process_incoming_message(mid_b)
+    rows_b = db_rows(
+        "SELECT id, processing_status, processing_error FROM messages "
+        "WHERE id BETWEEN ? AND ? AND sender_type = 'CUSTOMER' ORDER BY id",
+        burst[0],
+        burst[-1],
+    )
+    check(
+        "серия: ранние сообщения помечены «объединено», все DONE",
+        [r["processing_status"] for r in rows_b] == ["DONE"] * 3
+        and [r["processing_error"] for r in rows_b[:2]] == [message_service.MERGED_NOTE] * 2,
+    )
+    replies_b = chat_texts("1013")
+    check("серия: клиент получил ровно один ответ", len(replies_b) == 1, str(replies_b))
+    check(
+        "серия: ответ учёл весь текст серии (цена стрижки из БД)",
+        bool(replies_b) and "1500" in replies_b[0].replace(" ", "").replace(" ", ""),
+        str(replies_b),
+    )
+    check("серия: событие MESSAGE_MERGED в логе", len(system_logs("MESSAGE_MERGED")) >= 2)
+
+    # ----------------------------------------------------------------------- #
+    print("\n=== 8.6 Контроль ответа: сообщение не остаётся без ответа ===")
+    with SessionLocal() as db:
+        integration = db.query(Integration).filter(Integration.business_id == biz_a).one()
+        orphan = message_service.receive_incoming(
+            db, integration, IncomingMessage("TELEGRAM", "1014", "95", "Есть кто?", "Лев", None)
+        )
+    # Сообщение «обработано», но ответ так и не ушёл (например, сбой между шагами).
+    db_exec(
+        "UPDATE messages SET processing_status = 'DONE', created_at = datetime('now', '-5 minutes') "
+        "WHERE id = ?",
+        orphan.message_id,
+    )
+    check("контроль: свежее сообщение не трогает (ждёт обработку)", chat_texts("1014") == [])
+    fixed = message_service.ensure_replies()
+    check(
+        "контроль: сообщение без ответа 5 минут → шаблон «сообщение получили»",
+        fixed == 1 and chat_texts("1014") == [REPLY_RECEIVED],
+        f"{fixed} {chat_texts('1014')}",
+    )
+    check("контроль: событие REPLY_WATCHDOG в логе", len(system_logs("REPLY_WATCHDOG")) == 1)
+    check("контроль: повторно не срабатывает", message_service.ensure_replies() == 0)
+
+    with SessionLocal() as db:
+        integration = db.query(Integration).filter(Integration.business_id == biz_a).one()
+        quiet = message_service.receive_incoming(
+            db, integration, IncomingMessage("TELEGRAM", "1015", "96", "Жду", "Ян", None)
+        )
+    db_exec(
+        "UPDATE messages SET processing_status = 'DONE', created_at = datetime('now', '-5 minutes') "
+        "WHERE id = ?",
+        quiet.message_id,
+    )
+    db_exec("UPDATE conversations SET handled_by_manager = 1 WHERE id = ?", quiet.conversation_id)
+    check(
+        "контроль: диалог ведёт менеджер — AI молчит",
+        message_service.ensure_replies() == 0 and chat_texts("1015") == [],
+    )
 
     # ----------------------------------------------------------------------- #
     print("\n=== 9. Приостановленная компания (раздел 15) ===")
@@ -864,8 +959,9 @@ with TestClient(app) as c:
         == "DONE",
     )
     check(
-        "приостановлена: AI не отвечает",
-        len(fake.sent(TOKEN_A)) == sent_before
+        "приостановлена: AI не запускается, клиенту шаблон «сотрудник ответит»",
+        len(fake.sent(TOKEN_A)) == sent_before + 1
+        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_STAFF_WILL_ANSWER
         and db_rows("SELECT COUNT(*) AS n FROM ai_responses WHERE message_id = ?", mid)[0]["n"]
         == 0,
     )

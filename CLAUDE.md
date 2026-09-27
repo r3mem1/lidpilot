@@ -31,6 +31,9 @@ templates/ static/   кабинет (Jinja2)
 5. **Аудит и логи (§16–17):** каждое значимое событие → `system_logs` через `audit_service`; по логам должно быть видно,
    что случилось с конкретным сообщением и почему отправлен именно этот ответ.
 6. После ручного ответа менеджера AI молчит в диалоге до «решено» (`conversations.handled_by_manager`); приоритет лида внутри открытого диалога не понижается.
+   **Ответ на каждое сообщение** (решение заказчика 2026-09-27, отступление от §6.7): клиент всегда получает ответ — AI или шаблон `REPLY_*` из `ai/pipeline.py`;
+   молчание — только при `handled_by_manager` или выключенных автоответах (`ai_auto_reply`). «Передаю администратору» — только если AI не понял запрос
+   (сначала один переспрос). Серия сообщений — один ответ (`reply_debounce_seconds`); `message_service.ensure_replies` шлёт шаблон, если ответа нет 2 мин.
 7. Кабинет (`routes/cabinet.py`, `templates/`, `static/`): весь чужой текст только через автоэкранирование Jinja (без `|safe`), в JS — `textContent`; без inline-скриптов/стилей (строгий CSP в `main.py`); данные кабинет меняет только через JSON API; cookie-сессия защищена проверкой Origin (`enforce_same_origin`).
 8. Роль проверяется на **каждом** защищённом endpoint; `/admin/*` — только ADMIN (`require_platform_admin`); ADMIN не создаётся публичной регистрацией.
 
@@ -57,8 +60,8 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head                   # миграции; новая: alembic revision --autogenerate -m "..."
 uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
-python smoke_test_ai.py                # 142 проверки этапа 2
-python smoke_test_stage3.py            # 139 проверок этапа 3
+python smoke_test_ai.py                # 151 проверка этапа 2
+python smoke_test_stage3.py            # 149 проверок этапа 3 (+ серия сообщений, контроль ответа)
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 181 проверка этапа 5
 python smoke_test_stage6.py            # 134 проверки этапа 6

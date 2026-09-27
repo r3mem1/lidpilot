@@ -131,7 +131,10 @@ def telegram_webhook(
     if received.duplicate:
         return {"ok": True, "duplicate": True}
 
-    background.add_task(message_service.process_incoming_message, received.message_id)
+    # Пауза перед ответом: серия сообщений клиента получает один ответ.
+    background.add_task(
+        message_service.process_incoming_message, received.message_id, debounce=True
+    )
     return {"ok": True}
 
 
@@ -201,7 +204,9 @@ def vk_webhook(
         return _vk_ok()
     received = message_service.receive_incoming(db, integration, parsed.message)
     if not received.duplicate:
-        background.add_task(message_service.process_incoming_message, received.message_id)
+        background.add_task(
+            message_service.process_incoming_message, received.message_id, debounce=True
+        )
     return _vk_ok()
 
 

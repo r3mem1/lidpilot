@@ -23,19 +23,26 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from ai.booking import BookingKind, format_when
 from ai.context import HistoryRole, HistoryTurn
-from ai.pipeline import Decision, EscalationReason
+from ai.pipeline import (
+    REPLY_RECEIVED,
+    REPLY_REPEAT,
+    REPLY_STAFF_WILL_ANSWER,
+    Decision,
+    EscalationReason,
+)
 from config import settings
 from database import SessionLocal
 from integrations.base import ChannelSendError, IncomingMessage
@@ -79,6 +86,9 @@ logger = logging.getLogger("leadpilot.messages")
 # Свежие сообщения обрабатывает фоновая задача webhook; sweeper берёт только те,
 # что «застряли» дольше этого времени.
 _GRACE_SECONDS = 30
+
+# Отметка сообщения, ответ на которое дан вместе со следующим сообщением серии.
+MERGED_NOTE = "Объединено со следующим сообщением клиента"
 
 
 @dataclass(frozen=True)
@@ -251,13 +261,19 @@ def receive_incoming(
 # --------------------------------------------------------------------------- #
 # Обработка сообщения AI
 # --------------------------------------------------------------------------- #
-def process_incoming_message(message_id: int) -> None:
+def process_incoming_message(message_id: int, *, debounce: bool = False) -> None:
     """Обработать сохранённое сообщение (фоновая задача webhook и sweeper).
 
     Собственная сессия: вызывается после ответа Telegram, когда сессия
     запроса уже закрыта. Исключения наружу не выходят — они фиксируются
     в сообщении и в system_logs.
+
+    debounce=True (webhook): пауза reply_debounce_seconds, чтобы серия сообщений
+    клиента получила один ответ — ранние сообщения серии увидят более новое и
+    передадут ответ ему (решение 2026-09-27).
     """
+    if debounce and settings.reply_debounce_seconds > 0:
+        time.sleep(settings.reply_debounce_seconds)
     with SessionLocal() as db:
         if not _claim(db, message_id):
             return  # уже обработано или обрабатывается другим воркером
@@ -305,9 +321,11 @@ def _mark_failed(db: Session, message_id: int, exc: Exception) -> None:
     message.processing_error = f"{type(exc).__name__}: {exc}"[:500]
     exhausted = message.processing_attempts >= settings.message_max_attempts
     conversation = db.get(Conversation, message.conversation_id)
+    reply_needed = False
     if exhausted and conversation is not None:
         conversation.status = ConversationStatus.NEEDS_ATTENTION
         conversation.attention_reason = "PROCESSING_FAILED"
+        reply_needed = not _has_reply_after(db, message)
     _log(
         db,
         audit_service.EventType.MESSAGE_PROCESSING_FAILED,
@@ -325,6 +343,109 @@ def _mark_failed(db: Session, message_id: int, exc: Exception) -> None:
     )
     db.commit()
     logger.error("Сообщение %s: сбой обработки (%s)", message_id, message.processing_error)
+    # Попытки исчерпаны — клиент всё равно получает ответ (решение 2026-09-27).
+    if reply_needed and conversation is not None:
+        try:
+            _auto_reply(
+                db,
+                conversation,
+                REPLY_RECEIVED,
+                reason="PROCESSING_FAILED",
+                payload={"message_id": message_id, "conversation_id": conversation.id},
+            )
+        except Exception:  # noqa: BLE001 - сбой шаблона подхватит контроль ответа
+            db.rollback()
+            logger.exception("Сообщение %s: не удалось отправить шаблонный ответ", message_id)
+
+
+def _has_reply_after(db: Session, message: Message) -> bool:
+    """После сообщения клиента в диалоге уже есть ответ (AI или менеджера)."""
+    return (
+        db.scalar(
+            select(Message.id)
+            .where(
+                Message.conversation_id == message.conversation_id,
+                Message.id > message.id,
+                Message.sender_type != SenderType.CUSTOMER,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _dedupe_template(db: Session, conversation_id: int, text: str) -> str:
+    """Тот же шаблон уже уходил клиенту (после последнего ответа менеджера) —
+    вместо повтора короткое «администратор уже видит ваш запрос»."""
+    rows = db.scalars(
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.sender_type != SenderType.CUSTOMER,
+        )
+        .order_by(Message.id.desc())
+        .limit(10)
+    ).all()
+    for row in rows:
+        if row.sender_type is SenderType.MANAGER:
+            return text
+        if row.text == REPLY_REPEAT:
+            continue
+        return REPLY_REPEAT if row.text == text else text
+    return text
+
+
+def _auto_reply(
+    db: Session,
+    conversation: Conversation,
+    text: str,
+    *,
+    reason: str,
+    payload: dict,
+) -> DeliveryStatus | None:
+    """Шаблонный ответ клиенту без вызова AI (компания приостановлена, срок
+    подписки, сбой обработки, контроль ответа). Молчит, только если владелец
+    выключил автоответы или диалог ведёт менеджер (решение 2026-09-27)."""
+    business = db.get_one(Business, conversation.business_id)
+    if not business.ai_auto_reply or conversation.handled_by_manager:
+        return None
+    text = _dedupe_template(db, conversation.id, text)
+    outgoing = Message(
+        business_id=business.id,
+        conversation_id=conversation.id,
+        sender_type=SenderType.AI,
+        text=text,
+        delivery_status=DeliveryStatus.PENDING,
+    )
+    db.add(outgoing)
+    db.flush()
+    outgoing_id = outgoing.id
+    _log(
+        db,
+        audit_service.EventType.AUTO_REPLY_TEMPLATE,
+        "Клиенту отправлен шаблонный ответ без AI",
+        business_id=business.id,
+        payload={**payload, "reason": reason, "outgoing_message_id": outgoing_id, "text": text},
+    )
+    db.commit()  # ответ сохранён ДО обращения к каналу (раздел 18)
+    return deliver_outgoing(db, outgoing_id)
+
+
+def _merged_batch(db: Session, message: Message) -> list[Message]:
+    """Сообщения серии, ответ на которые передан этому: подряд идущие перед ним
+    сообщения клиента с отметкой MERGED_NOTE (от старых к новым)."""
+    rows = db.scalars(
+        select(Message)
+        .where(Message.conversation_id == message.conversation_id, Message.id < message.id)
+        .order_by(Message.id.desc())
+        .limit(20)
+    ).all()
+    batch: list[Message] = []
+    for row in rows:
+        if row.sender_type is not SenderType.CUSTOMER or row.processing_error != MERGED_NOTE:
+            break
+        batch.append(row)
+    return list(reversed(batch))
 
 
 def _load_history(db: Session, conversation_id: int, before_message_id: int) -> list[HistoryTurn]:
@@ -367,8 +488,43 @@ def _run(db: Session, message_id: int) -> None:
         "attempt": message.processing_attempts,
     }
 
-    # Заблокированная компания: сообщение сохранено, но AI не отвечает и клиенту
-    # ничего не уходит (раздел 15: suspended). Диалог виден менеджеру.
+    # Повторный запуск после сбоя между сохранением решения и доставкой:
+    # AI второй раз не вызываем (иначе клиент получил бы два разных ответа).
+    existing = db.scalar(select(AiResponse).where(AiResponse.message_id == message.id))
+    if existing is not None:
+        if existing.response_message_id is not None:
+            deliver_outgoing(db, existing.response_message_id)
+        message.processing_status = ProcessingStatus.DONE
+        message.processing_error = None
+        db.commit()
+        return
+
+    # Клиент пишет серией: пока ждали паузу, пришло следующее сообщение — ответ
+    # на всю серию даст обработка последнего (решение 2026-09-27).
+    newer = db.scalar(
+        select(Message.id)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.sender_type == SenderType.CUSTOMER,
+            Message.id > message.id,
+        )
+        .limit(1)
+    )
+    if newer is not None:
+        message.processing_status = ProcessingStatus.DONE
+        message.processing_error = MERGED_NOTE
+        _log(
+            db,
+            audit_service.EventType.MESSAGE_MERGED,
+            "Сообщение серии: ответ будет дан вместе со следующим сообщением клиента",
+            business_id=business_id,
+            payload={**log_context, "next_message_id": newer},
+        )
+        db.commit()
+        return
+
+    # Заблокированная компания: AI не запускается (раздел 15: suspended), диалог
+    # виден менеджеру, клиент получает шаблон «сотрудник ответит».
     if business.status is BusinessStatus.SUSPENDED:
         conversation.status = ConversationStatus.NEEDS_ATTENTION
         conversation.attention_reason = "BUSINESS_SUSPENDED"
@@ -383,10 +539,17 @@ def _run(db: Session, message_id: int) -> None:
             payload=log_context,
         )
         db.commit()
+        _auto_reply(
+            db,
+            conversation,
+            REPLY_STAFF_WILL_ANSWER,
+            reason="BUSINESS_SUSPENDED",
+            payload=log_context,
+        )
         return
 
     # Срок trial или оплаченного периода истёк (этап 8): как при suspended —
-    # сообщение сохранено и видно менеджеру, AI не вызывается, клиенту ничего не уходит.
+    # AI не вызывается, диалог у менеджера, клиенту — шаблон «сотрудник ответит».
     if not subscription_service.ai_allowed(db, business_id):
         conversation.status = ConversationStatus.NEEDS_ATTENTION
         conversation.attention_reason = "SUBSCRIPTION_EXPIRED"
@@ -401,17 +564,13 @@ def _run(db: Session, message_id: int) -> None:
             payload=log_context,
         )
         db.commit()
-        return
-
-    # Повторный запуск после сбоя между сохранением решения и доставкой:
-    # AI второй раз не вызываем (иначе клиент получил бы два разных ответа).
-    existing = db.scalar(select(AiResponse).where(AiResponse.message_id == message.id))
-    if existing is not None:
-        if existing.response_message_id is not None:
-            deliver_outgoing(db, existing.response_message_id)
-        message.processing_status = ProcessingStatus.DONE
-        message.processing_error = None
-        db.commit()
+        _auto_reply(
+            db,
+            conversation,
+            REPLY_STAFF_WILL_ANSWER,
+            reason="SUBSCRIPTION_EXPIRED",
+            payload=log_context,
+        )
         return
 
     # Диалог ведёт менеджер (он уже отвечал клиенту вручную): AI молчит, чтобы не
@@ -433,9 +592,15 @@ def _run(db: Session, message_id: int) -> None:
         db.commit()
         return
 
-    history = _load_history(db, conversation_id, message.id)
-    ai_text = "" if message.content_type == "attachment" else message.text
-    prior_status = conversation.status
+    # Серия сообщений отвечается одним ответом: AI видит их текст целиком,
+    # а история диалога берётся до начала серии.
+    batch = [*_merged_batch(db, message), message]
+    if len(batch) > 1:
+        log_context["merged_message_ids"] = [m.id for m in batch[:-1]]
+    history = _load_history(db, conversation_id, batch[0].id)
+    ai_text = "\n".join(
+        m.text for m in batch if m.content_type != "attachment" and (m.text or "").strip()
+    )
     # Вне ТЗ (§22): расписание мастеров для AI-записи (None — запись выключена).
     customer = db.get_one(Customer, conversation.customer_id)
     schedule = booking_ai_provider.for_conversation(
@@ -476,10 +641,11 @@ def _run(db: Session, message_id: int) -> None:
         reason = result.escalation_reason
         conversation.status = ConversationStatus.NEEDS_ATTENTION
         conversation.attention_reason = reason.value if reason else None
-        # Клиента уже предупредили о передаче менеджеру — не спамим шаблонами.
-        reply_text = (
-            None if prior_status is ConversationStatus.NEEDS_ATTENTION else result.safe_reply
-        )
+        # Клиент получает ответ на каждое сообщение (решение 2026-09-27); повтор
+        # того же шаблона заменяется коротким «администратор уже видит запрос».
+        reply_text = result.safe_reply
+        if reply_text:
+            reply_text = _dedupe_template(db, conversation_id, reply_text)
     else:
         reply_text = result.reply_text
     if result.booking is not None and result.booking.kind is BookingKind.HOLD:
@@ -705,7 +871,79 @@ def reprocess_pending(limit: int = 20) -> int:
                 db.rollback()
                 logger.exception("Повторная отправка сообщения %s не удалась", message_id)
         handled += 1
-    return handled
+    return handled + ensure_replies(limit)
+
+
+def ensure_replies(limit: int = 20) -> int:
+    """Контроль «на каждое сообщение клиента есть ответ» (решение 2026-09-27).
+
+    Последнее сообщение клиента в диалоге, обработанное (или с исчерпанными
+    попытками), но без ответа дольше reply_watchdog_seconds, получает шаблон
+    REPLY_RECEIVED. Не трогает диалоги, которые ведёт менеджер, компании с
+    выключенными автоответами и клиентов, заблокировавших бота. Повторно не
+    срабатывает: после шаблона в диалоге уже есть более новое сообщение.
+    """
+    now = utcnow()
+    older_than = now - timedelta(seconds=settings.reply_watchdog_seconds)
+    newer_than = now - timedelta(minutes=settings.reply_watchdog_window_minutes)
+    later = aliased(Message)
+    with SessionLocal() as db:
+        ids = list(
+            db.scalars(
+                select(Message.id)
+                .join(Conversation, Conversation.id == Message.conversation_id)
+                .join(Business, Business.id == Message.business_id)
+                .join(Customer, Customer.id == Conversation.customer_id)
+                .where(
+                    Message.sender_type == SenderType.CUSTOMER,
+                    Message.created_at < older_than,
+                    Message.created_at > newer_than,
+                    or_(
+                        Message.processing_status == ProcessingStatus.DONE,
+                        and_(
+                            Message.processing_status == ProcessingStatus.FAILED,
+                            Message.processing_attempts >= settings.message_max_attempts,
+                        ),
+                    ),
+                    Conversation.handled_by_manager.is_(False),
+                    Conversation.status != ConversationStatus.RESOLVED,
+                    Business.ai_auto_reply.is_(True),
+                    Customer.channel_blocked.is_(False),
+                    ~exists().where(
+                        later.conversation_id == Message.conversation_id,
+                        later.id > Message.id,
+                    ),
+                )
+                .order_by(Message.id)
+                .limit(limit)
+            )
+        )
+
+    for message_id in ids:
+        with SessionLocal() as db:
+            try:
+                message = db.get_one(Message, message_id)
+                conversation = db.get_one(Conversation, message.conversation_id)
+                payload = {
+                    "message_id": message.id,
+                    "conversation_id": conversation.id,
+                    "processing_status": getattr(message.processing_status, "value", None),
+                    "processing_error": message.processing_error,
+                }
+                _log(
+                    db,
+                    audit_service.EventType.REPLY_WATCHDOG,
+                    "Сообщение клиента осталось без ответа — отправляем шаблон",
+                    business_id=message.business_id,
+                    level=LogLevel.WARNING,
+                    payload=payload,
+                )
+                _auto_reply(db, conversation, REPLY_RECEIVED, reason="WATCHDOG", payload=payload)
+                db.commit()
+            except Exception:  # noqa: BLE001 - один сбой не должен останавливать остальные
+                db.rollback()
+                logger.exception("Контроль ответа: сообщение %s", message_id)
+    return len(ids)
 
 
 # --------------------------------------------------------------------------- #

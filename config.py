@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     reprocess_interval_seconds: int = 60
     message_max_attempts: int = 3
     message_processing_timeout_seconds: int = 300
+    # Клиент часто пишет несколькими сообщениями подряд: webhook ждёт столько
+    # секунд, и AI отвечает один раз на всю серию (решение 2026-09-27). 0 — без паузы.
+    reply_debounce_seconds: float = 6.0
+    # Контроль «на каждое сообщение есть ответ» (решение 2026-09-27): последнее
+    # сообщение клиента без ответа старше reply_watchdog_seconds получает шаблон.
+    # Окно ограничено, чтобы после деплоя не отвечать в давно забытые диалоги.
+    reply_watchdog_seconds: int = 120
+    reply_watchdog_window_minutes: int = 60
     # Число доверенных прокси перед приложением (Render/Cloudflare = 1..2).
     # 0 — заголовок X-Forwarded-For игнорируется: клиент может его подделать.
     trusted_proxy_count: int = 0

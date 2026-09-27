@@ -57,7 +57,7 @@ class EscalationReason(str, enum.Enum):
     HOT_LEAD_CONFIRMATION = "HOT_LEAD_CONFIRMATION"  # горячий лид, нужно подтверждение
     EXTERNAL_API_ERROR = "EXTERNAL_API_ERROR"  # ошибка внешнего API
     VALIDATION_FAILED = "VALIDATION_FAILED"  # ответ не прошёл проверку
-    SPAM_SUSPECTED = "SPAM_SUSPECTED"  # похоже на спам, отвечать не нужно
+    SPAM_SUSPECTED = "SPAM_SUSPECTED"  # похоже на спам
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,11 @@ class PipelineResult:
     latency_ms: int = 0
     # Вне ТЗ (§22): итог работы системы записи (бронь, предложенные окна).
     booking: BookingOutcome | None = None
+    # Шаблон для частного случая причины (отмена записи, нет окон, переспрос…);
+    # None — шаблон причины из _SAFE_REPLIES.
+    reply_override: str | None = None
+    # Владелец выключил автоответы: клиенту не уходит ничего, даже шаблон.
+    client_reply_allowed: bool = True
 
     @property
     def needs_manager(self) -> bool:
@@ -85,11 +90,14 @@ class PipelineResult:
     def safe_reply(self) -> str | None:
         """Безопасный ответ клиенту при передаче менеджеру (раздел 6.6:
         «безопасный ответ с предложением уточнить данные», сценарий C раздела 7).
-        Готовый шаблон без фактов о компании; None — клиенту ничего не
-        отправляется (подозрение на спам) либо ответ уходит как обычный (SEND)."""
+        Готовый шаблон без фактов о компании. Решение 2026-09-27 (отступление от
+        §6.7, согласовано): клиент получает ответ на каждое сообщение, None —
+        только при выключенных автоответах или при SEND (ответ уходит как обычный)."""
         if self.decision is not Decision.ESCALATE or self.escalation_reason is None:
             return None
-        return safe_reply_for(self.escalation_reason)
+        if not self.client_reply_allowed:
+            return None
+        return self.reply_override or safe_reply_for(self.escalation_reason)
 
     def as_log_payload(self) -> dict:
         """Компактное представление для system_logs (раздел 17)."""
@@ -104,15 +112,13 @@ class PipelineResult:
         if self.escalation_reason:
             payload["escalation_reason"] = self.escalation_reason.value
             payload["escalation_detail"] = self.escalation_detail
-            # На уровне pipeline это только «для такой причины эскалации есть
-            # шаблон заглушки» — pipeline не знает про историю диалога.
-            # Уйдёт ли он клиенту на самом деле, решает message_service (антиспам:
-            # повторная заглушка в уже эскалированном диалоге подавляется) — это
-            # видно в более позднем событии MESSAGE_PROCESSED.reply_sent_to_customer.
-            # Прежнее имя safe_reply_sent вводило в заблуждение: событие AI_ERROR
-            # логируется раньше решения message_service и «true» не значило
-            # «клиент получил ответ» (было расхождение с MESSAGE_PROCESSED).
+            # На уровне pipeline это только «для эскалации есть шаблон ответа».
+            # Доставлен ли он клиенту, видно в более позднем событии
+            # MESSAGE_PROCESSED.reply_sent_to_customer (message_service может
+            # заменить повтор того же шаблона коротким REPLY_REPEAT).
             payload["safe_reply_available"] = self.safe_reply is not None
+            if self.reply_override:
+                payload["reply_override"] = self.reply_override
         if self.response:
             payload["model"] = self.response.model
             payload["prompt_version"] = self.response.prompt_version
@@ -136,16 +142,36 @@ def normalize(text: str) -> str:
     return cleaned
 
 
-# Шаблоны безопасных ответов клиенту при эскалации. Без цен, времени, адресов
+# Шаблоны ответов клиенту, когда отвечает не LLM. Без цен, времени, адресов
 # и обещаний записи — валидатор пропускает их по построению (проверяется тестом).
-_HOLDING_DEFAULT = (
-    "Спасибо за сообщение! Уточню детали у сотрудника — он ответит вам в ближайшее время."
+# Решение заказчика 2026-09-27 (отступление от §6.7, согласовано): клиент получает
+# ответ на каждое сообщение; «передаю администратору» — только если AI не понял
+# запрос; молчание — только после вмешательства менеджера или при выключенных
+# автоответах.
+REPLY_RECEIVED = "Спасибо, сообщение получили — ответим в ближайшее время."
+REPLY_STAFF_WILL_ANSWER = "Спасибо за сообщение! Сотрудник ответит вам в ближайшее время."
+REPLY_REPEAT = "Администратор уже видит ваш запрос и ответит здесь в ближайшее время."
+REPLY_NO_INFO = "Точной информации об этом у меня нет — уточню у администратора, он ответит здесь."
+REPLY_CLARIFY = "Уточните, пожалуйста, что вас интересует: цены, запись или что-то другое?"
+REPLY_UNCLEAR_HANDOFF = "Передаю ваш вопрос администратору — он ответит здесь в ближайшее время."
+REPLY_TEXT_ONLY = "Пока я понимаю только текст — напишите, пожалуйста, словами, что вас интересует."
+REPLY_BOOKING_REQUEST = (
+    "С радостью запишем! Подскажите, на какую услугу и какой день и время вам удобны? "
+    "Администратор подтвердит запись здесь."
 )
+REPLY_NO_SLOTS = (
+    "На ближайшие две недели свободных окон нет. "
+    "Администратор подберёт для вас время и напишет здесь."
+)
+REPLY_CANCEL = (
+    "Поняли, передали администратору — он отменит или перенесёт запись и подтвердит здесь."
+)
+REPLY_SPAM = (
+    "Здравствуйте! Если у вас вопрос об услугах или записи — напишите, пожалуйста, подробнее."
+)
+
 _SAFE_REPLIES: dict[EscalationReason, str | None] = {
-    EscalationReason.HOT_LEAD_CONFIRMATION: (
-        "Спасибо за обращение! Передаю ваш запрос на запись администратору — "
-        "он подтвердит время и свяжется с вами."
-    ),
+    EscalationReason.HOT_LEAD_CONFIRMATION: REPLY_BOOKING_REQUEST,
     EscalationReason.COMPLAINT: (
         "Сожалеем, что так вышло. Передали ваше обращение ответственному сотруднику — "
         "он свяжется с вами."
@@ -153,18 +179,43 @@ _SAFE_REPLIES: dict[EscalationReason, str | None] = {
     EscalationReason.ACTION_NOT_ALLOWED: (
         "С этим вопросом я помочь не могу — передаю его сотруднику, он ответит вам."
     ),
-    EscalationReason.MISSING_DATA: _HOLDING_DEFAULT,
-    EscalationReason.AUTO_REPLY_DISABLED: _HOLDING_DEFAULT,
-    EscalationReason.AMBIGUOUS_REQUEST: _HOLDING_DEFAULT,
-    EscalationReason.EXTERNAL_API_ERROR: _HOLDING_DEFAULT,
-    EscalationReason.VALIDATION_FAILED: _HOLDING_DEFAULT,
-    # Похоже на рекламу: отвечать боту-рассыльщику незачем, менеджер решит сам.
-    EscalationReason.SPAM_SUSPECTED: None,
+    EscalationReason.MISSING_DATA: REPLY_NO_INFO,
+    EscalationReason.VALIDATION_FAILED: REPLY_NO_INFO,
+    EscalationReason.AMBIGUOUS_REQUEST: REPLY_CLARIFY,
+    EscalationReason.EXTERNAL_API_ERROR: REPLY_RECEIVED,
+    EscalationReason.SPAM_SUSPECTED: REPLY_SPAM,
+    # Владелец выключил автоответы — никаких ответов, даже шаблонов.
+    EscalationReason.AUTO_REPLY_DISABLED: None,
 }
+
+# Все шаблоны — для проверки валидатором в тестах.
+ALL_TEMPLATES: tuple[str, ...] = (
+    REPLY_RECEIVED,
+    REPLY_STAFF_WILL_ANSWER,
+    REPLY_REPEAT,
+    REPLY_NO_INFO,
+    REPLY_CLARIFY,
+    REPLY_UNCLEAR_HANDOFF,
+    REPLY_TEXT_ONLY,
+    REPLY_BOOKING_REQUEST,
+    REPLY_NO_SLOTS,
+    REPLY_CANCEL,
+    REPLY_SPAM,
+)
 
 
 def safe_reply_for(reason: EscalationReason) -> str | None:
     return _SAFE_REPLIES.get(reason)
+
+
+def _last_ai_text(history: list[HistoryTurn]) -> str | None:
+    """Текст последнего содержательного ответа AI клиенту — чтобы не переспрашивать
+    дважды подряд. Короткий REPLY_REPEAT пропускается; ответ менеджера сбрасывает."""
+    for turn in reversed(history):
+        if turn.role.value == "CUSTOMER" or turn.text == REPLY_REPEAT:
+            continue
+        return turn.text if turn.role.value == "AI" else None
+    return None
 
 
 # Вне ТЗ (§22): просьбы отменить или перенести запись движок записи не обрабатывает.
@@ -202,14 +253,27 @@ class AIPipeline:
         history: list[HistoryTurn] | None = None,
         schedule: ScheduleProvider | None = None,
     ) -> PipelineResult:
+        result = self._decide(text, knowledge, history or [], schedule)
+        # Владелец выключил автоответы (раздел 13): AI только классифицирует,
+        # клиенту не уходит ничего — ни ответ, ни шаблон при эскалации.
+        if not knowledge.auto_reply and result.decision is Decision.ESCALATE:
+            return replace(result, client_reply_allowed=False)
+        return result
+
+    def _decide(
+        self,
+        text: str,
+        knowledge: BusinessKnowledge,
+        history: list[HistoryTurn],
+        schedule: ScheduleProvider | None,
+    ) -> PipelineResult:
         started = time.monotonic()
-        history = history or []
         normalized = normalize(text)
 
         def elapsed() -> int:
             return int((time.monotonic() - started) * 1000)
 
-        # Пустое или нетекстовое сообщение (стикер, фото) — решает человек.
+        # Пустое или нетекстовое сообщение (стикер, фото): просим написать словами.
         if not normalized:
             classification = Classification(
                 intent=Intent.OTHER,
@@ -224,6 +288,7 @@ class AIPipeline:
                 escalation_reason=EscalationReason.AMBIGUOUS_REQUEST,
                 escalation_detail="Сообщение не содержит текста для обработки",
                 latency_ms=elapsed(),
+                reply_override=REPLY_TEXT_ONLY,
             )
 
         # Шаги Intent + Priority classification.
@@ -236,8 +301,45 @@ class AIPipeline:
         ):
             return self._handle_booking(normalized, history, classification, schedule, elapsed)
 
-        # Человек нужен ещё до генерации: жалоба, запись, спам, ошибка API,
-        # неоднозначный запрос (раздел 6.7). Автоответ в этих случаях не даём.
+        def escalate(
+            reason: EscalationReason, override: str | None = None, detail: str | None = None
+        ) -> PipelineResult:
+            return PipelineResult(
+                decision=Decision.ESCALATE,
+                normalized_text=normalized,
+                classification=classification,
+                escalation_reason=reason,
+                escalation_detail=detail or classification.reason,
+                latency_ms=elapsed(),
+                reply_override=override,
+            )
+
+        rules_fallback = classification.source.value == "RULES_FALLBACK"
+        special = classification.action_not_allowed or classification.intent in (
+            Intent.COMPLAINT,
+            Intent.SPAM,
+            Intent.BOOKING,
+        )
+
+        # AI не понял, чего хочет клиент: один раз переспрашиваем, при повторе —
+        # «передаю администратору» (единственный случай этой фразы, решение 2026-09-27).
+        if classification.unclear and not special and not rules_fallback:
+            # Уже переспрашивали или уже передали — дальше только «передаю»
+            # (повтор message_service заменит коротким REPLY_REPEAT).
+            asked = _last_ai_text(history) in (REPLY_CLARIFY, REPLY_UNCLEAR_HANDOFF)
+            return escalate(
+                EscalationReason.AMBIGUOUS_REQUEST, REPLY_UNCLEAR_HANDOFF if asked else None
+            )
+
+        # Запись, которую не взял движок записи: время называет только движок из БД
+        # (инвариант 2), поэтому LLM-ответ здесь не генерируется никогда.
+        if classification.intent is Intent.BOOKING and not classification.action_not_allowed:
+            if _CANCEL_RE.search(normalized):
+                return escalate(EscalationReason.HOT_LEAD_CONFIRMATION, REPLY_CANCEL)
+            return escalate(EscalationReason.HOT_LEAD_CONFIRMATION)
+
+        # Человек нужен ещё до генерации: жалоба, спам, ошибка API, запрос вне
+        # прав AI, нет данных (раздел 6.7). Клиент получает шаблон своей причины.
         if classification.needs_manager:
             reason = _PRE_GENERATION_REASONS.get(classification.intent)
             if classification.action_not_allowed:
@@ -245,17 +347,10 @@ class AIPipeline:
             if reason is None:
                 reason = (
                     EscalationReason.EXTERNAL_API_ERROR
-                    if classification.source.value == "RULES_FALLBACK"
+                    if rules_fallback
                     else EscalationReason.MISSING_DATA
                 )
-            return PipelineResult(
-                decision=Decision.ESCALATE,
-                normalized_text=normalized,
-                classification=classification,
-                escalation_reason=reason,
-                escalation_detail=classification.reason,
-                latency_ms=elapsed(),
-            )
+            return escalate(reason)
 
         # Владелец отключил автоответы (раздел 13: разрешённые действия): AI только
         # классифицировал обращение, отвечает менеджер.
@@ -341,7 +436,11 @@ class AIPipeline:
         # Отмена и перенос существующей записи — решает человек (движок только записывает).
         if _CANCEL_RE.search(text):
             return False
-        return classification.intent is Intent.BOOKING or schedule.in_booking_dialog()
+        if not (classification.intent is Intent.BOOKING or schedule.in_booking_dialog()):
+            return False
+        # Ни одна услуга не привязана к мастеру — записывать не на что: иначе движок
+        # спросил бы «На какую услугу? Есть: .» с пустым списком.
+        return bool(schedule.services())
 
     def _handle_booking(
         self,
@@ -369,6 +468,7 @@ class AIPipeline:
                 escalation_detail="Свободного времени по расписанию не найдено",
                 latency_ms=elapsed(),
                 booking=outcome,
+                reply_override=REPLY_NO_SLOTS,
             )
         response = GeneratedResponse(
             text=outcome.reply,

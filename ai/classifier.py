@@ -71,6 +71,9 @@ class Classification:
     # Клиент просит действие вне прав AI: раскрыть инструкции, обойти правила,
     # изменить данные бизнеса (разделы 6.7, 12.3).
     action_not_allowed: bool = False
+    # Модель не поняла, чего хочет клиент (бессмыслица, обрывок фразы): AI
+    # переспрашивает, а не отвечает «нет данных» (решение заказчика 2026-09-27).
+    unclear: bool = False
 
     def as_dict(self) -> dict:
         """Ровно та структура, что описана в разделе 12.2 (плюс происхождение)."""
@@ -80,6 +83,7 @@ class Classification:
             "needs_manager": self.needs_manager,
             "reason": self.reason,
             "source": self.source.value,
+            "unclear": self.unclear,
         }
 
 
@@ -297,6 +301,7 @@ def _parse_llm_classification(data: dict, fallback: Classification) -> Classific
         reason=reason[:500],
         source=ClassificationSource.LLM,
         prompt_version=CLASSIFIER_PROMPT_VERSION,
+        unclear=data.get("unclear") is True,
     )
 
 

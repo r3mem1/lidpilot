@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 
+from ai.pipeline import REPLY_BOOKING_REQUEST, REPLY_NO_INFO  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from models import (  # noqa: E402
     AiResponse,
@@ -53,11 +54,9 @@ OWNER_EMAIL = "demo@example.com"
 MANAGER_EMAIL = "manager@example.com"
 PASSWORD = "Demo-Pass-123"  # noqa: S105 - пароль демо-аккаунта, только для локальной проверки
 
-HOLD = "Спасибо за сообщение! Уточню детали у сотрудника — он ответит вам в ближайшее время."
-BOOKING_HOLD = (
-    "Спасибо за обращение! Передаю ваш запрос на запись администратору — "
-    "он подтвердит время и свяжется с вами."
-)
+# Шаблоны — те же, что отправляет pipeline (ai/pipeline.py), чтобы демо не расходилось с кодом.
+HOLD = REPLY_NO_INFO
+BOOKING_HOLD = REPLY_BOOKING_REQUEST
 PRICE_REPLY = (
     "Актуальные цены: Борода — 1 000 ₽, Стрижка — 1 500 ₽. Подскажите, что вас интересует?"
 )
