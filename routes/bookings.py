@@ -16,6 +16,8 @@
     POST   /bookings/{booking_id}/confirm | /reject       владелец, менеджер, мастер (свои)
     POST   /bookings/{booking_id}/cancel                  владелец, менеджер
     GET    /businesses/{business_id}/availability         владелец, менеджер
+    POST   /masters/{master_id}/notify-link               сам мастер или владелец
+    DELETE /masters/{master_id}/notify-link               сам мастер или владелец
 
 Доступ — только через BusinessContext (access_service); чужое — 404 (раздел 16).
 Менеджер видит расписание всех мастеров, но смены не правит.
@@ -37,12 +39,14 @@ from schemas import (
     MasterOut,
     MasterServicesUpdate,
     MasterUpdate,
+    NotifyLinkOut,
+    NotifyLinkRequest,
     ShiftCreate,
     ShiftOut,
     ShiftUpdate,
     SlotOut,
 )
-from services import booking_service, master_service, schedule_service
+from services import booking_service, master_notify_service, master_service, schedule_service
 from services.access_service import (
     BusinessContext,
     require_booking_access,
@@ -293,3 +297,30 @@ def availability(
         )
         for s in slots
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Уведомления мастеру (бот/сообщество компании)
+# --------------------------------------------------------------------------- #
+@router.post("/masters/{master_id}/notify-link", response_model=NotifyLinkOut)
+def create_notify_link(
+    payload: NotifyLinkRequest,
+    resolved: tuple[Master, BusinessContext] = Depends(require_master_access(*SCHEDULE_EDITORS)),
+    db: Session = Depends(get_db),
+):
+    master, ctx = resolved
+    return master_notify_service.create_link_code(db, ctx, master, payload.channel)
+
+
+@router.delete("/masters/{master_id}/notify-link", status_code=status.HTTP_204_NO_CONTENT)
+def delete_notify_link(
+    resolved: tuple[Master, BusinessContext] = Depends(require_master_access(*SCHEDULE_EDITORS)),
+    db: Session = Depends(get_db),
+):
+    master, ctx = resolved
+    if not master_service.can_edit_schedule(ctx, master):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия"
+        )
+    master_notify_service.unlink(db, ctx, master)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

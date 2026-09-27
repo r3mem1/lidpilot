@@ -76,6 +76,7 @@
         <strong>{{ master.display_name }}</strong>
         <span class="tag">{{ 'аккаунт мастера' if master.user_id else 'без аккаунта' }}</span>
         {% if not master.active %}<span class="tag tag--attention">не принимает</span>{% endif %}
+        {% if master.notify_chat_id %}<span class="tag tag--ok">уведомления: {{ label('channel', master.notify_channel) }}</span>{% endif %}
         <span class="row-actions">
           <button class="btn btn--small" type="button" data-api-click data-url="/masters/{{ master.id }}" data-method="PUT"
                   data-body='{"active": {{ 'false' if master.active else 'true' }}}' data-success="reload">{{ 'Не принимает записи' if master.active else 'Принимает записи' }}</button>

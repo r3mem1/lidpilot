@@ -524,3 +524,6 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
   .table.schedule { min-width: 720px; }
 }
 .field--gap { margin-top: 14px; }
+.notify-result { display: block; margin-top: 16px; }
+.notify-result p + p { margin-top: 8px; }
+.notify-result .code { font: 600 18px/1 ui-monospace, Consolas, monospace; letter-spacing: 0.08em; }

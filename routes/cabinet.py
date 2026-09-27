@@ -784,6 +784,30 @@ def bookings_page(
     )
 
 
+@router.get("/cabinet/{business_id}/notify")
+def notify_page(
+    request: Request,
+    ctx: BusinessContext = Depends(page_business(*ALL_MEMBERS)),
+    db: Session = Depends(get_db),
+):
+    master = master_service.own_master(db, ctx)
+    channels = [
+        i.channel
+        for i in integration_service.list_integrations(db, ctx)
+        if i.status.value == "ACTIVE"
+    ]
+    return render(
+        request,
+        db,
+        ctx,
+        "notify.html",
+        "notify",
+        "Уведомления",
+        master=master,
+        channels=channels,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Настройки и интеграции
 # --------------------------------------------------------------------------- #

@@ -21,7 +21,7 @@ templates/ static/   кабинет (Jinja2)
 ## Жёсткие инварианты
 1. **Мультитенантность (§8, §16):** маршрут никогда не берёт `business_id` из запроса «как есть» — только через `BusinessContext`
    (`services/access_service.py`). Нет доступа → **404, не 403**. Любой запрос к бизнес-данным фильтруется по `business_id`.
-2. **AI не выдумывает** цены, адреса, сроки, скидки, свободные слоты (§6.6, §12.3). Ответ уходит клиенту только после `ResponseValidator`;
+2. **AI не выдумывает** цены, адреса, сроки, скидки, свободные слоты (§6.6, §12.3). Свободное время называет только движок записи `ai/booking.py` — из БД и шаблоном, не LLM. Ответ уходит клиенту только после `ResponseValidator`;
    иначе `ESCALATE` менеджеру (§6.7). Данные из БД приоритетнее слов клиента.
 3. **Секреты** только в `.env`/секрет-хранилище; не в коде, не в логах, не в ответах API (§16). `integrations.credentials_ref` — ссылка, не сам секрет.
    Токен бота компании хранится только зашифрованным (`enc:…`, `services/secret_store.py`), секрет webhook — только SHA-256;
@@ -45,6 +45,7 @@ templates/ static/   кабинет (Jinja2)
 | 6 Admin-панель (`/admin`: обзор, компании, статус/тариф/trial, события, метрики, MRR) | ✅ реализован, `smoke_test_stage6.py`, `scripts/e2e_admin.py` |
 | 7 Первый пилот | 🔄 в работе: прод на Render + Supabase, бэкап и restore-drill, Sentry (`monitoring.py`), срок хранения `system_logs`, эксплуатация — `docs/operations.md`; осталось — webhook на проде, 1–3 компании, приёмка §21 на проде |
 | 8 SaaS-автоматизация (без платежей: оплата по счёту, продление в `/admin`) | ✅ реализован: срок подписки выключает AI (`services/subscription_service.py`), баннеры, блок «Тариф», чек-лист onboarding (`services/onboarding_service.py`), `smoke_test_stage8.py` |
+| Вне ТЗ (§22): мастера и запись | ✅ роль MASTER, смены по датам, записи, AI-бронь по расписанию (`ai/booking.py`, время только из БД), уведомления мастеру; `routes/bookings.py`, `smoke_test_stage10.py` |
 | 9 Масштабирование | ✅ канал VK (`integrations/vk.py`, `/webhooks/vk`), общий контракт каналов `integrations/base.py`, rate limit в общей БД (`rate_limit_counters`), `smoke_test_stage9.py` |
 
 Не выходить за границы текущего этапа: не добавлять функции из «Не входит в MVP» (§19) — календарь, биллинг, несколько каналов, мобильное приложение.
@@ -64,6 +65,7 @@ python smoke_test_stage6.py            # 134 проверки этапа 6
 python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
 python smoke_test_stage8.py            # 39 проверок этапа 8 (подписка, onboarding)
 python smoke_test_stage9.py            # 71 проверка этапа 9 (VK, rate limit в БД)
+python smoke_test_stage10.py           # 113 проверок: мастера, расписание, записи, AI-запись, уведомления
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
@@ -72,7 +74,7 @@ pip-audit -r requirements.txt          # уязвимости зависимос
 ```
 Тесты — самодостаточные скрипты `smoke_test*.py` (httpx + временная SQLite). Новый этап = новый `smoke_test_stageN.py` в том же стиле.
 Токены: тесты и линтеры запускать через `python scripts/run_checks.py [stage4 …]` и `… lint [ruff|pyright|bandit|pip-audit]` —
-печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 40 LOW в `smoke_test_stage3-9.py`/`scripts/` — известный шум.
+печатают итог и находки (без фильтрации), полный вывод в `.test_logs/` (открывать при падении). bandit: 44 LOW в `smoke_test_stage3-10.py`/`scripts/` — известный шум.
 Hook `scripts/hooks/ruff_after_edit.py` проверяет правленый `.py` ruff'ом. Большие файлы (`README.md`, `docs/manual-check.md`, `smoke_test_stage*.py`, `models.py`,
 `services/message_service.py`) — Grep, затем Read с `offset/limit`; широкий поиск — субагенту `Explore`; БД — MCP `sqlite` точечным SELECT.
 

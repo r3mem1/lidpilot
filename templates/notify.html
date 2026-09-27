@@ -1,0 +1,46 @@
+{% extends "cabinet_base.html" %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Уведомления</h1>
+    <p>Бот компании пришлёт вам сообщение, когда ассистент поставит бронь, администратор подтвердит или отменит запись.</p>
+  </div>
+</header>
+
+<section class="sheet">
+  {% if not master %}
+    <div class="sheet-body"><p class="muted">Уведомления доступны мастерам. Профиль мастера создаёт владелец компании в разделе «Сотрудники».</p></div>
+  {% elif master.notify_chat_id %}
+    <div class="sheet-head"><h2>Подключено</h2><span class="tag tag--ok">{{ label('channel', master.notify_channel) }}</span></div>
+    <div class="sheet-body">
+      <p>Уведомления о записях приходят вам в {{ label('channel', master.notify_channel) }} от бота компании.</p>
+      <div class="form-actions">
+        <button class="btn btn--danger" type="button" data-api-click data-url="/masters/{{ master.id }}/notify-link" data-method="DELETE"
+                data-confirm="Отключить уведомления? Сообщения о новых записях перестанут приходить." data-confirm-ok="Отключить" data-success="reload">Отключить уведомления</button>
+      </div>
+    </div>
+  {% elif not channels %}
+    <div class="sheet-body"><p class="muted">У компании пока не подключён ни Telegram-бот, ни сообщество VK — попросите владельца подключить канал в «Настройках».</p></div>
+  {% else %}
+    <div class="sheet-head"><h2>Подключить</h2></div>
+    <form class="sheet-body" data-notify-link data-url="/masters/{{ master.id }}/notify-link" novalidate>
+      <fieldset class="checks">
+        <legend class="label">Куда присылать уведомления</legend>
+        {% for channel in channels %}
+          <label class="check"><input type="radio" name="channel" value="{{ channel.value }}"{% if loop.first %} checked{% endif %}> {{ label('channel', channel) }}</label>
+        {% endfor %}
+      </fieldset>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Получить код</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+      <div class="notice notice--ok notify-result" data-notify-result hidden>
+        <p><span data-notify-instruction></span></p>
+        <p>Код: <strong class="code" data-notify-code></strong> — действует 30 минут.</p>
+        <p><a class="btn btn--small" data-notify-open href="#" target="_blank" rel="noopener noreferrer" hidden>Открыть чат с ботом</a></p>
+        <p><button class="btn btn--small" type="button" data-reload>Я отправил код — проверить</button></p>
+      </div>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

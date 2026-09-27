@@ -64,6 +64,7 @@ from services import (
     audit_service,
     integration_service,
     lead_service,
+    master_notify_service,
     message_service,
     rate_limit_service,
 )
@@ -112,6 +113,9 @@ def telegram_webhook(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
     incoming, ignored_reason = telegram.parse_update(update)
+    # Вне ТЗ (§22): код привязки уведомлений мастера и чат мастера — не клиент.
+    if incoming is not None and master_notify_service.handle_incoming(db, integration, incoming):
+        return {"ok": True, "master": True}
     if incoming is None:
         audit_service.log_event(
             db,
@@ -193,6 +197,8 @@ def vk_webhook(
         )
         return _vk_ok()
 
+    if master_notify_service.handle_incoming(db, integration, parsed.message):
+        return _vk_ok()
     received = message_service.receive_incoming(db, integration, parsed.message)
     if not received.duplicate:
         background.add_task(message_service.process_incoming_message, received.message_id)

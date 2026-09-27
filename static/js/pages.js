@@ -16,6 +16,27 @@
     }
   });
 
+  /* ---------- Уведомления мастера: код привязки показывается один раз (вне ТЗ, §22) ---------- */
+  document.addEventListener("submit", function (event) {
+    var form = event.target.closest && event.target.closest("form[data-notify-link]");
+    if (!form) return;
+    event.preventDefault();
+    var status = $("[data-status]", form);
+    var button = $("[type=submit]", form);
+    status.textContent = "";
+    LP.setBusy(button, true);
+    LP.api("POST", form.dataset.url, LP.collect(form)).then(function (res) {
+      LP.setBusy(button, false);
+      if (!res.ok) { status.textContent = LP.errorMessage(res); return; }
+      var box = $("[data-notify-result]", form);
+      $("[data-notify-instruction]", box).textContent = res.data.instruction;
+      $("[data-notify-code]", box).textContent = res.data.code;
+      var open = $("[data-notify-open]", box);
+      if (res.data.link) { open.href = res.data.link; open.hidden = false; } else { open.hidden = true; }
+      box.hidden = false;
+    });
+  });
+
   /* ---------- Услуги: создание и правка (раздел 6.3) ---------- */
   var serviceDialog = $("#service-dialog");
   var serviceForm = serviceDialog && $("[data-service-form]", serviceDialog);

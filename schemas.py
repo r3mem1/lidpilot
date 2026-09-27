@@ -697,3 +697,17 @@ class SlotOut(BaseModel):
     starts_at: datetime
     ends_at: datetime
     local_start: datetime
+
+
+class NotifyLinkRequest(BaseModel):
+    channel: Channel
+
+
+class NotifyLinkOut(BaseModel):
+    """Код показывается ОДИН раз: в БД хранится только его хеш."""
+
+    code: str
+    link: str | None
+    channel: Channel
+    instruction: str
+    expires_at: datetime

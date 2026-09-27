@@ -45,7 +45,7 @@ from routes import integrations as integrations_routes
 from routes import leads as leads_routes
 from routes import messages as messages_routes
 from routes import team as team_routes
-from services import audit_service, message_service, rate_limit_service
+from services import audit_service, master_notify_service, message_service, rate_limit_service
 from services.auth_service import hash_password
 from templating import templates
 
@@ -133,6 +133,8 @@ async def _reprocess_loop() -> None:
             handled = await run_in_threadpool(message_service.reprocess_pending)
             if handled:
                 logger.info("Повторная обработка: обработано записей — %s", handled)
+            # Вне ТЗ (§22): неотправленные уведомления мастерам.
+            await run_in_threadpool(master_notify_service.retry_pending)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - цикл не должен умирать из-за одного сбоя

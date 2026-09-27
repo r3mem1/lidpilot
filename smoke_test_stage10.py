@@ -969,6 +969,201 @@ with TestClient(app) as c:
         and request.at == time(12, 30),
     )
 
+    # ----------------------------------------------------------------------- #
+    print("\n=== 10. Уведомления мастеру (Telegram и VK) ===")
+    r = c.post(
+        f"/masters/{ivan}/notify-link", headers=H["master_petr"], json={"channel": "TELEGRAM"}
+    )
+    check("чужой мастер не получает код для Ивана (403)", r.status_code == 403)
+    r = c.post(f"/masters/{ivan}/notify-link", headers=H["master_ivan"], json={"channel": "VK"})
+    check("канал, не подключённый компанией → 409", r.status_code == 409)
+    r = c.post(
+        f"/masters/{ivan}/notify-link", headers=H["master_ivan"], json={"channel": "TELEGRAM"}
+    )
+    link = r.json()
+    check(
+        "код привязки и deep link t.me/<бот>?start=LP…",
+        r.status_code == 200
+        and re.fullmatch(r"LP[A-Z0-9]{8}", link["code"]) is not None
+        and link["link"] == f"https://t.me/shopbot?start={link['code']}",
+        str(link),
+    )
+    stored = db_rows("SELECT notify_code_hash FROM masters WHERE id=?", ivan)[0]["notify_code_hash"]
+    check("в БД хранится только хеш кода", stored and link["code"] not in stored)
+    customers_before = db_rows("SELECT COUNT(*) AS n FROM customers")[0]["n"]
+    say(900, "/start LPZZZZZZZZ")
+    check(
+        "неверный код → ответ «не найден», мастер не привязан",
+        "не найден" in fake.sent(900)[-1]["text"]
+        and db_rows("SELECT notify_chat_id FROM masters WHERE id=?", ivan)[0]["notify_chat_id"]
+        is None,
+    )
+    say(901, f"/start {link['code']}")
+    row = db_rows(
+        "SELECT notify_chat_id, notify_channel, notify_code_hash FROM masters WHERE id=?", ivan
+    )[0]
+    check(
+        "мастер привязан по коду из deep link",
+        row["notify_chat_id"] == "901"
+        and row["notify_channel"] == "TELEGRAM"
+        and row["notify_code_hash"] is None,
+    )
+    check("мастер получил «Готово!»", fake.sent(901) and "Готово" in fake.sent(901)[-1]["text"])
+    check(
+        "чат мастера не стал клиентом",
+        db_rows("SELECT COUNT(*) AS n FROM customers")[0]["n"] == customers_before,
+    )
+    before = len(fake.sent(901))
+    say(901, f"/start {link['code']}")
+    check("повторная доставка кода — без ошибки мастеру", len(fake.sent(901)) == before)
+    say(901, "Хочу записаться на стрижку")
+    check(
+        "сообщения из чата мастера AI не обрабатывает",
+        len(fake.sent(901)) == before
+        and db_rows("SELECT COUNT(*) AS n FROM customers")[0]["n"] == customers_before,
+    )
+
+    before = len(fake.sent(901))
+    reply = say(601, f"Запишите на стрижку {d1} в 16:00")
+    notices = fake.sent(901)[before:]
+    check(
+        "бронь от AI → уведомление мастеру",
+        bool(notices) and "Новая бронь" in notices[-1]["text"] and "16:00" in notices[-1]["text"],
+        str(notices),
+    )
+    hold_601 = bookings_of(601)[0]["id"]
+    before = len(fake.sent(901))
+    c.post(f"/bookings/{hold_601}/confirm", headers=H["manager_a"])
+    check(
+        "подтверждение → уведомление мастеру",
+        "Запись подтверждена" in fake.sent(901)[-1]["text"] and len(fake.sent(901)) == before + 1,
+    )
+
+    # Сбой Telegram при уведомлении: сохранено PENDING, потом повтор.
+    real_handler = fake.handler
+    fake.handler = lambda request: httpx.Response(
+        502, json={"ok": False, "description": "Bad Gateway"}
+    )  # type: ignore[method-assign]
+    r = c.post(
+        f"/businesses/{biz_a}/bookings",
+        headers=H["manager_a"],
+        json={
+            "master_id": ivan,
+            "service_id": cut,
+            "day": iso(D1),
+            "start_time": "17:00",
+            "client_name": "Ночной",
+        },
+    )
+    fake.handler = real_handler  # type: ignore[method-assign]
+    pending = db_rows(
+        "SELECT id, status, attempts FROM master_notifications WHERE text LIKE '%Ночной%'"
+    )
+    check(
+        "сбой отправки: уведомление сохранено для повтора",
+        r.status_code == 201
+        and pending
+        and pending[0]["status"] == "PENDING"
+        and pending[0]["attempts"] == 1,
+        str([dict(p) for p in pending]),
+    )
+    conn = sqlite3.connect(DB)
+    conn.execute(
+        "UPDATE master_notifications SET created_at = '2020-01-01 00:00:00.000000' WHERE id = ?",
+        (pending[0]["id"],),
+    )
+    conn.commit()
+    conn.close()
+    from services import master_notify_service  # noqa: E402
+
+    before = len(fake.sent(901))
+    master_notify_service.retry_pending()
+    check(
+        "повтор отправил уведомление",
+        db_rows("SELECT status FROM master_notifications WHERE id=?", pending[0]["id"])[0]["status"]
+        == "SENT"
+        and len(fake.sent(901)) == before + 1,
+    )
+
+    r = c.delete(f"/masters/{ivan}/notify-link", headers=H["master_ivan"])
+    check(
+        "мастер отключил уведомления",
+        r.status_code == 204
+        and db_rows("SELECT notify_chat_id FROM masters WHERE id=?", ivan)[0]["notify_chat_id"]
+        is None,
+    )
+
+    # VK: привязка сообщением с кодом в сообщество.
+    from integrations.vk import VkClient  # noqa: E402
+
+    vk_calls: list[dict] = []
+
+    def vk_handler(request: httpx.Request) -> httpx.Response:
+        from urllib.parse import parse_qs
+
+        method = request.url.path.rsplit("/", 1)[-1]
+        params = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+        vk_calls.append({"method": method, **params})
+        responses = {
+            "groups.getById": {"groups": [{"id": 7001, "name": "Бритва VK"}]},
+            "groups.getCallbackConfirmationCode": {"code": "conf7001"},
+            "groups.addCallbackServer": {"server_id": 1},
+            "messages.send": 777,
+        }
+        return httpx.Response(200, json={"response": responses.get(method, 1)})
+
+    integration_service.build_vk_client = lambda token: VkClient(
+        token,
+        base_url="https://api.vk.test",
+        transport=httpx.MockTransport(vk_handler),
+        sleep=lambda _s: None,
+    )
+    c.post(
+        f"/businesses/{biz_a}/integrations/vk",
+        headers=H["owner_a"],
+        json={"access_token": "vk1.a." + "V" * 60},
+    )
+    vk_secret = next(
+        call["secret_key"] for call in vk_calls if call["method"] == "groups.addCallbackServer"
+    )
+    link = c.post(
+        f"/masters/{petr}/notify-link", headers=H["master_petr"], json={"channel": "VK"}
+    ).json()
+    check("VK: ссылка на диалог с сообществом", link["link"] == "https://vk.me/club7001")
+    r = c.post(
+        "/webhooks/vk",
+        json={
+            "type": "message_new",
+            "group_id": 7001,
+            "secret": vk_secret,
+            "event_id": "e1",
+            "object": {
+                "message": {"id": 55, "peer_id": 3003, "from_id": 3003, "text": link["code"]}
+            },
+        },
+    )
+    row = db_rows("SELECT notify_chat_id, notify_channel FROM masters WHERE id=?", petr)[0]
+    check(
+        "VK: мастер привязан кодом, ответ «ok»",
+        r.text == "ok" and row["notify_chat_id"] == "3003" and row["notify_channel"] == "VK",
+    )
+    check(
+        "VK: мастеру отправлено «Готово!»",
+        any(
+            call["method"] == "messages.send"
+            and call.get("peer_id") == "3003"
+            and "Готово" in call.get("message", "")
+            for call in vk_calls
+        ),
+    )
+    logs = " ".join(
+        r["message"] + " " + (r["metadata"] or "")
+        for r in db_rows("SELECT message, metadata FROM system_logs")
+    )
+    check(
+        "коды привязки не попадают в журнал", link["code"] not in logs and "LPZZZZZZZZ" not in logs
+    )
+
 with contextlib.suppress(PermissionError):
     DB.unlink(missing_ok=True)
 
