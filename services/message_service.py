@@ -1227,12 +1227,14 @@ def _booking_text(db: Session, booking: Booking, event: str) -> str | None:
     service_name = service.name if service else "услуга"
     what = f"«{service_name}» у мастера {master.display_name if master else ''}".strip()
     if event == "confirmed":
-        address = f" Адрес: {business.address}." if business.address else ""
-        return f"Запись подтверждена: {what}, {when}. Ждём вас!{address}"
+        # Решение заказчика 2026-09-28: «вы записаны» клиент получил сразу при брони
+        # (ai/booking.py) — подтверждение администратора второй раз ему не пишем.
+        return None
     if event == "rejected":
+        # Клиент уже считал себя записанным — извиняемся и обещаем другое время.
         return (
-            f"К сожалению, не получилось подтвердить запись {when}. "
-            "Администратор свяжется с вами, чтобы подобрать другое время."
+            f"Извините, не получилось сохранить вашу запись: {what}, {when}. "
+            "Администратор напишет вам здесь и предложит другое время."
         )
     if event == "cancelled":
         return f"Ваша запись {when} ({what}) отменена. Напишите, если хотите выбрать другое время."

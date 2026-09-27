@@ -26,7 +26,7 @@ from typing import Protocol
 from ai.context import HistoryTurn
 from ai.llm_client import LLMClient, LLMError
 
-BOOKING_PROMPT_VERSION = "booking-v1"
+BOOKING_PROMPT_VERSION = "booking-v2"
 HORIZON_DAYS = 14
 MAX_OPTIONS = 3
 
@@ -63,6 +63,10 @@ class ScheduleProvider(Protocol):
 
     def hold(self, service_id: int, master_id: int, starts_at: datetime) -> int | None:
         """Поставить бронь; id брони или None, если время уже занято."""
+        ...
+
+    def master_load(self, day: date) -> dict[int, int]:
+        """Число активных записей каждого мастера в этот день (для «без разницы»)."""
         ...
 
     def last_offer(self) -> tuple[int | None, list[SlotOption]]:
@@ -119,6 +123,7 @@ class BookingRequest:
     part_of_day: str | None = None  # morning | day | evening
     choice: int | None = None  # номер предложенного варианта (1…)
     agree: bool = False  # «да», «подходит» — согласие на единственный вариант
+    any_master: bool = False  # «без разницы», «к любому» — мастера выбирает AI
 
 
 # --------------------------------------------------------------------------- #
@@ -179,6 +184,12 @@ _MONTH_AFTER_RE = re.compile(r"\s+(?:" + "|".join(_MONTHS) + ")")
 _CHOICE_WORDS = {"перв": 1, "втор": 2, "трет": 3}
 _AGREE_RE = re.compile(
     r"^\s*(?:да|давайте|давай|подходит|согласен|согласна|ок|окей|хорошо|записывайте|запишите)\b",
+    re.IGNORECASE,
+)
+# Клиенту всё равно, к какому мастеру: AI выбирает наименее загруженного в этот день.
+_ANY_MASTER_RE = re.compile(
+    r"без\s+разниц|не\s*важно|вс[её]\s+равно|кто\s+свободн|на\s+ваш\s+выбор"
+    r"|на\s+ваше\s+усмотрение|\bлюб(?:ой|ому|ого)\s+мастер|^\s*(?:к\s+)?любо(?:му|й)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 
@@ -257,11 +268,16 @@ def _future_date(today: date, day: int, month: int) -> date | None:
 
 def _parse_time(text: str) -> tuple[time | None, str | None]:
     lowered = text.lower()
-    match = _TIME_RE.search(lowered)
     at: time | None = None
-    if match:
-        at = time(int(match.group(1)), int(match.group(2)))
-    else:
+    for match in _TIME_RE.finditer(lowered):
+        first, second = int(match.group(1)), int(match.group(2))
+        # «02.10» — это дата (2 октября), а не 02:10: через точку время, только
+        # если число не может быть «день.месяц» («10.30», «13.00»).
+        if lowered[match.start(2) - 1] == "." and 1 <= first <= 31 and 1 <= second <= 12:
+            continue
+        at = time(first, second)
+        break
+    if at is None:
         for hour in _HOUR_RE.finditer(lowered):
             if _MONTH_AFTER_RE.match(lowered, hour.end()):
                 continue  # «на 3 октября» — это дата, а не час
@@ -302,6 +318,7 @@ def parse_by_rules(
         part_of_day=part,
         choice=choice,
         agree=bool(_AGREE_RE.search(text)),
+        any_master=bool(_ANY_MASTER_RE.search(text)),
     )
 
 
@@ -322,7 +339,9 @@ def _build_prompt(
         '{"service": <название из списка или null>, "master": <имя из списка или null>, '
         '"date": "YYYY-MM-DD" или null, "time": "HH:MM" или null, '
         '"part_of_day": "morning"|"day"|"evening"|null, "choice": <номер предложенного варианта или null>, '
-        '"agree": true|false}.\n'
+        '"agree": true|false, "any_master": true|false}.\n'
+        "any_master — true, только если клиент прямо сказал, что мастер ему не важен "
+        "(«без разницы», «к любому», «кто свободен»).\n"
         f"Сегодня {today.isoformat()} ({_WEEKDAY_ACC[today.weekday()].split()[-1]}).\n"
         "Услуги: " + "; ".join(s.name for s in services) + ".\n"
         "Мастера: " + ("; ".join(name for _, name in masters) or "нет") + ".\n"
@@ -384,6 +403,7 @@ def _from_llm(
         part_of_day=part,
         choice=choice,
         agree=data.get("agree") is True,
+        any_master=data.get("any_master") is True,
     )
 
 
@@ -399,18 +419,53 @@ def _part_ok(slot: SlotOption, part: str | None) -> bool:
     )
 
 
-def _spread(slots: list[SlotOption], limit: int = MAX_OPTIONS) -> list[SlotOption]:
-    """Разные времена (не три мастера на одно и то же время)."""
-    chosen: list[SlotOption] = []
-    seen: set[datetime] = set()
+def _pick_times(slots: list[SlotOption], limit: int = MAX_OPTIONS) -> list[SlotOption]:
+    """Все окна первых `limit` разных времён (в порядке входа): на одно время может
+    быть несколько свободных мастеров — клиент увидит их всех."""
+    times: list[datetime] = []
     for slot in slots:
-        if slot.starts_at in seen:
-            continue
-        seen.add(slot.starts_at)
-        chosen.append(slot)
-        if len(chosen) == limit:
-            break
-    return chosen
+        if slot.starts_at not in times:
+            if len(times) == limit:
+                continue
+            times.append(slot.starts_at)
+    chosen = set(times)
+    return [s for s in slots if s.starts_at in chosen]
+
+
+def _least_loaded(provider: ScheduleProvider, slots: list[SlotOption]) -> SlotOption:
+    """«Без разницы»: мастер, у которого в этот день меньше записей (при равенстве —
+    по алфавиту, чтобы выбор был предсказуемым)."""
+    load = provider.master_load(slots[0].local_start.date())
+    return min(slots, key=lambda s: (load.get(s.master_id, 0), s.master_name))
+
+
+def _pick_from_offer(request: BookingRequest, offered: list[SlotOption]) -> list[SlotOption]:
+    """Окна из прошлого предложения, которые выбрал клиент (номер, время, мастер или
+    «без разницы»). Пустой список — выбор не распознан."""
+    times = list(dict.fromkeys(s.starts_at for s in offered))
+    picked: list[SlotOption] = []
+    if request.choice and request.choice <= len(times):
+        picked = [s for s in offered if s.starts_at == times[request.choice - 1]]
+    elif request.at is not None:
+        picked = [
+            s
+            for s in offered
+            if s.local_start.time() == request.at
+            and (request.day is None or s.local_start.date() == request.day)
+        ]
+    elif len(times) == 1 and (request.agree or request.any_master or request.master_id):
+        picked = list(offered)
+    elif request.master_id is not None:
+        own = [s for s in offered if s.master_id == request.master_id]
+        if len({s.starts_at for s in own}) == 1:
+            picked = own
+    if request.master_id is not None:
+        picked = [s for s in picked if s.master_id == request.master_id]
+    return picked
+
+
+def _capitalize(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 class BookingEngine:
@@ -440,11 +495,17 @@ class BookingEngine:
             part_of_day=llm.part_of_day or rules.part_of_day,
             choice=llm.choice or rules.choice,
             agree=llm.agree or rules.agree,
+            any_master=llm.any_master or rules.any_master,
         )
         return merged, "LLM"
 
     def handle(
-        self, text: str, history: list[HistoryTurn], provider: ScheduleProvider
+        self,
+        text: str,
+        history: list[HistoryTurn],
+        provider: ScheduleProvider,
+        *,
+        address: str | None = None,
     ) -> BookingOutcome:
         request, source = self.extract(text, history, provider)
         services = provider.services()
@@ -464,28 +525,22 @@ class BookingEngine:
             )
         service_name = names[service_id]
         today = provider.today
+        master_id = request.master_id
+        master_name = dict(provider.masters()).get(master_id) if master_id else None
 
-        # Клиент выбирает из предложенного: номер варианта, «да» на единственный или время из списка.
+        def hold(slots: list[SlotOption]) -> BookingOutcome | None:
+            return self._try_hold(
+                provider, service_id, service_name, _least_loaded(provider, slots), source, address
+            )
+
+        # Ответ на прошлое предложение: номер, время, мастер или «без разницы».
         if offered and service_id == offer_service:
-            picked: SlotOption | None = None
-            if request.choice and request.choice <= len(offered):
-                picked = offered[request.choice - 1]
-            elif request.at is not None:
-                same_time = [
-                    s
-                    for s in offered
-                    if s.local_start.time() == request.at
-                    and (request.day is None or s.local_start.date() == request.day)
-                ]
-                picked = same_time[0] if same_time else None
-            elif request.agree and len(offered) == 1:
-                picked = offered[0]
-            if picked is not None:
-                outcome = self._try_hold(provider, service_id, service_name, picked, source)
+            picked = _pick_from_offer(request, offered)
+            if picked:
+                outcome = hold(picked)
                 if outcome is not None:
                     return outcome
 
-        master_id = request.master_id
         if request.at is not None:
             days = (
                 [request.day]
@@ -499,9 +554,14 @@ class BookingEngine:
                     if s.local_start.time() == request.at
                 ]
                 if exact:
-                    outcome = self._try_hold(provider, service_id, service_name, exact[0], source)
-                    if outcome is not None:
-                        return outcome
+                    # Свободен один мастер или клиенту всё равно — бронируем сразу;
+                    # свободны несколько, а мастер не назван — предлагаем выбрать.
+                    if len({s.master_id for s in exact}) == 1 or request.any_master:
+                        outcome = hold(exact)
+                        if outcome is not None:
+                            return outcome
+                    else:
+                        return self._ask_master(service_id, service_name, exact, today, source)
                     break
             # Нужное время занято: ближайшие к нему окна в тот же день, иначе — ближайшие вообще.
             day = request.day or today
@@ -510,17 +570,19 @@ class BookingEngine:
             same_day.sort(
                 key=lambda s: abs((s.local_start.replace(tzinfo=None) - target).total_seconds())
             )
-            options = sorted(_spread(same_day), key=lambda s: s.starts_at)
+            options = sorted(_pick_times(same_day), key=lambda s: (s.starts_at, s.master_name))
             prefix = (
                 f"К сожалению, {format_when(datetime.combine(day, request.at), today)} уже занято. "
             )
             if not options:
-                options = _spread(
+                options = _pick_times(
                     provider.free_slots(
                         service_id, today, today + timedelta(days=HORIZON_DAYS - 1), master_id
                     )
                 )
-            return self._offer(service_id, service_name, options, today, source, prefix)
+            return self._offer(
+                service_id, service_name, options, today, source, prefix, master_name
+            )
 
         day_from = request.day or today
         day_to = request.day or today + timedelta(days=HORIZON_DAYS - 1)
@@ -535,7 +597,9 @@ class BookingEngine:
             slots = provider.free_slots(
                 service_id, today, today + timedelta(days=HORIZON_DAYS - 1), master_id
             )
-        return self._offer(service_id, service_name, _spread(slots), today, source, prefix)
+        return self._offer(
+            service_id, service_name, _pick_times(slots), today, source, prefix, master_name
+        )
 
     @staticmethod
     def _try_hold(
@@ -544,20 +608,46 @@ class BookingEngine:
         service_name: str,
         slot: SlotOption,
         source: str,
+        address: str | None = None,
     ) -> BookingOutcome | None:
         booking_id = provider.hold(service_id, slot.master_id, slot.starts_at)
         if booking_id is None:
             return None
         when = format_when(slot.local_start, provider.today)
+        # Решение заказчика 2026-09-28: клиент сразу получает однозначное «вы записаны»;
+        # администратор подтверждает бронь в кабинете, при отклонении клиенту пишем.
+        where = f" Адрес: {address.strip()}." if address and address.strip() else ""
         return BookingOutcome(
             kind=BookingKind.HOLD,
             reply=(
-                f"Забронировали для вас «{service_name}» у мастера {slot.master_name} {when}. "
-                "Администратор подтвердит запись — пришлём подтверждение сюда."
+                f"Готово, вы записаны: «{service_name}» у мастера {slot.master_name}, {when}. "
+                f"Ждём вас!{where} Если планы изменятся — просто напишите сюда."
             ),
             service_id=service_id,
             booking_id=booking_id,
             held=slot,
+            source=source,
+        )
+
+    @staticmethod
+    def _ask_master(
+        service_id: int,
+        service_name: str,
+        slots: list[SlotOption],
+        today: date,
+        source: str,
+    ) -> BookingOutcome:
+        """На названное время свободны несколько мастеров, а клиент мастера не назвал."""
+        when = format_when(slots[0].local_start, today)
+        masters = ", ".join(s.master_name for s in slots)
+        return BookingOutcome(
+            kind=BookingKind.OFFER,
+            reply=(
+                f"{_capitalize(when)} на «{service_name}» свободны мастера: {masters}. "
+                "К кому вас записать? Если без разницы — так и напишите, выберу мастера сам."
+            ),
+            service_id=service_id,
+            offered=tuple(slots),
             source=source,
         )
 
@@ -569,22 +659,35 @@ class BookingEngine:
         today: date,
         source: str,
         prefix: str = "",
+        master_name: str | None = None,
     ) -> BookingOutcome:
         if not options:
             return BookingOutcome(
                 kind=BookingKind.NO_SLOTS, reply=None, service_id=service_id, source=source
             )
-        lines = [
-            f"{i}) {format_when(s.local_start, today)} — мастер {s.master_name}"
-            for i, s in enumerate(options, 1)
-        ]
+        groups: dict[datetime, list[SlotOption]] = {}
+        for slot in options:
+            groups.setdefault(slot.starts_at, []).append(slot)
+        lines = []
+        for i, slots in enumerate(groups.values(), 1):
+            when = format_when(slots[0].local_start, today)
+            who = "" if master_name else " — " + " или ".join(s.master_name for s in slots)
+            lines.append(f"{i}) {when}{who}")
+        several = master_name is None and len({s.master_id for s in options}) > 1
+        header = (
+            f"Свободное время у мастера {master_name} на «{service_name}»:"
+            if master_name
+            else f"Свободное время на «{service_name}»:"
+        )
+        tail = (
+            "Напишите номер варианта. Если хотите к определённому мастеру — назовите его, "
+            "иначе выберу мастера сам."
+            if several
+            else "Напишите номер варианта или удобное время."
+        )
         return BookingOutcome(
             kind=BookingKind.OFFER,
-            reply=(
-                f"{prefix}Свободное время на «{service_name}»:\n"
-                + "\n".join(lines)
-                + "\nНапишите номер варианта или удобное время."
-            ),
+            reply=f"{prefix}{header}\n" + "\n".join(lines) + f"\n{tail}",
             service_id=service_id,
             offered=tuple(options),
             source=source,

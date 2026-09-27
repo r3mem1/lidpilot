@@ -11,13 +11,13 @@ booking_service.free_slots, бронь — booking_service.create_booking (ат�
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ai.booking import BookableService, BookingKind, SlotOption
-from models import AiResponse, BookingSource, Business, Master, Message, Service
+from models import AiResponse, Booking, BookingSource, Business, Master, Message, Service
 from services import booking_service, master_service, schedule_service
 
 
@@ -109,6 +109,23 @@ class DbScheduleProvider:
         except booking_service.BookingConflict:
             return None
         return booking.id
+
+    def master_load(self, day: date) -> dict[int, int]:
+        """Активные записи (ждут подтверждения и подтверждённые) каждого мастера
+        компании за день в её поясе — для выбора мастера на «без разницы»."""
+        start = datetime.combine(day, time.min, tzinfo=self._tz).astimezone(UTC)
+        end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=self._tz).astimezone(UTC)
+        rows = self._db.execute(
+            select(Booking.master_id, func.count(Booking.id))
+            .where(
+                Booking.business_id == self._business_id,
+                Booking.status.in_(booking_service.ACTIVE),
+                Booking.starts_at >= start,
+                Booking.starts_at < end,
+            )
+            .group_by(Booking.master_id)
+        ).all()
+        return {master_id: count for master_id, count in rows}
 
     # -- память диалога --------------------------------------------------------- #
     def _last_booking_details(self) -> dict | None:

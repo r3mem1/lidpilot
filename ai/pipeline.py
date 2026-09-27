@@ -299,7 +299,9 @@ class AIPipeline:
         if schedule is not None and self._booking_applies(
             normalized, classification, knowledge, schedule
         ):
-            return self._handle_booking(normalized, history, classification, schedule, elapsed)
+            return self._handle_booking(
+                normalized, history, classification, schedule, elapsed, knowledge.address
+            )
 
         def escalate(
             reason: EscalationReason, override: str | None = None, detail: str | None = None
@@ -449,9 +451,10 @@ class AIPipeline:
         classification: Classification,
         schedule: ScheduleProvider,
         elapsed,
+        address: str | None = None,
     ) -> PipelineResult:
         started = time.monotonic()
-        outcome = self._booking.handle(normalized, history, schedule)
+        outcome = self._booking.handle(normalized, history, schedule, address=address)
         classification = replace(
             classification,
             intent=Intent.BOOKING,

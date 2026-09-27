@@ -121,6 +121,7 @@ MSK = ZoneInfo("Europe/Moscow")
 TODAY = datetime.now(MSK).date()
 D1 = TODAY + timedelta(days=2)  # «послезавтра» — всегда в будущем
 D2 = TODAY + timedelta(days=3)
+D3 = TODAY + timedelta(days=4)  # выбор мастера AI (без разницы / по имени)
 PWD = "Str0ng-Pass-1"
 
 
@@ -788,8 +789,8 @@ with TestClient(app) as c:
         str([dict(h) for h in held]),
     )
     check(
-        "ответ: бронь, услуга, мастер и время из БД",
-        "Забронировали" in reply and "Стрижка" in reply and "Иван" in reply and "11:00" in reply,
+        "ответ сразу: «вы записаны», услуга, мастер и время из БД",
+        "вы записаны" in reply and "Стрижка" in reply and "Иван" in reply and "11:00" in reply,
         reply,
     )
     state = conv_state(501)
@@ -810,7 +811,7 @@ with TestClient(app) as c:
         params={"service_id": cut, "date_from": iso(D1), "date_to": iso(D1)},
     ).json()
     free_times = {s["local_start"][11:16] for s in free}
-    offered = re.findall(r"в (\d{2}:\d{2}) — мастер", reply)
+    offered = re.findall(r"в (\d{2}:\d{2}) — ", reply)
     check(
         "занятое время → «занято» и варианты",
         "уже занято" in reply and len(offered) == 3 and not bookings_of(502),
@@ -847,8 +848,66 @@ with TestClient(app) as c:
         reply,
     )
     reply = say(503, "давайте первый вариант")
+    check("«первый вариант» → бронь", len(bookings_of(503)) == 1 and "вы записаны" in reply, reply)
+
+    # Выбор мастера (решение заказчика 2026-09-28): мастер не назван — AI предлагает,
+    # «без разницы» — записывает к мастеру с наименьшим числом записей в этот день.
+    # Отдельный день D3: оба мастера работают 12:00–16:00, у Ивана уже есть запись.
+    d3 = D3.strftime("%d.%m")
+    for m in (ivan, petr):
+        c.post(
+            f"/masters/{m}/shifts",
+            headers=H["owner_a"],
+            json={"day": iso(D3), "start_time": "12:00", "end_time": "16:00"},
+        )
+    r = c.post(
+        f"/businesses/{biz_a}/bookings",
+        headers=H["manager_a"],
+        json={
+            "master_id": ivan,
+            "service_id": beard,
+            "day": iso(D3),
+            "start_time": "15:00",
+            "client_name": "Занятой клиент",
+        },
+    )
+    check("у Ивана в D3 уже есть запись", r.status_code == 201, str(r.status_code))
+    reply = say(508, f"Запишите на бороду {d3} в 13:00")
     check(
-        "«первый вариант» → бронь", len(bookings_of(503)) == 1 and "Забронировали" in reply, reply
+        "мастер не назван, свободны двое → AI предлагает выбрать, без брони",
+        "свободны мастера" in reply
+        and "Иван" in reply
+        and "Пётр" in reply
+        and "без разницы" in reply
+        and not bookings_of(508),
+        reply,
+    )
+    reply = say(508, "без разницы")
+    b508 = bookings_of(508)
+    check(
+        "«без разницы» → к менее загруженному в этот день (Пётр: 0 записей, Иван: 1)",
+        len(b508) == 1 and b508[0]["master_id"] == petr and "вы записаны" in reply,
+        f"{[dict(b) for b in b508]} {reply}",
+    )
+    reply = say(510, f"Запишите на бороду {d3} в 14:00, к любому мастеру")
+    b510 = bookings_of(510)
+    check(
+        "«к любому мастеру» сразу в просьбе → запись без лишнего вопроса",
+        len(b510) == 1 and "вы записаны" in reply,
+        reply,
+    )
+    reply = say(509, f"Запишите на бороду {d3} к Ивану")
+    check(
+        "мастер назван → окна только этого мастера",
+        "у мастера Иван" in reply and "Пётр" not in reply,
+        reply,
+    )
+    reply = say(509, "1")
+    b509 = bookings_of(509)
+    check(
+        "выбор варианта у названного мастера → запись к нему",
+        len(b509) == 1 and b509[0]["master_id"] == ivan and "вы записаны" in reply,
+        reply,
     )
 
     reply = say(504, "Ужасно подстригли в прошлый раз, запишите на исправление")
@@ -901,8 +960,8 @@ with TestClient(app) as c:
     r = c.post(f"/bookings/{hold_501}/confirm", headers=H["manager_a"])
     msg = fake.sent(501)[-1]["text"] if len(fake.sent(501)) > before else ""
     check(
-        "подтверждение → клиенту «Запись подтверждена» с временем",
-        r.status_code == 200 and "Запись подтверждена" in msg and "11:00" in msg,
+        "подтверждение → клиенту второй раз не пишем (он уже получил «вы записаны»)",
+        r.status_code == 200 and r.json()["status"] == "CONFIRMED" and msg == "",
         msg,
     )
     check("после подтверждения диалог больше не ждёт внимания", conv_state(501)["status"] == "OPEN")
@@ -913,8 +972,9 @@ with TestClient(app) as c:
     )[0]["master_id"] == ivan else c.post(f"/bookings/{hold_502}/reject", headers=H["manager_a"])
     msg = fake.sent(502)[-1]["text"] if len(fake.sent(502)) > before else ""
     check(
-        "отклонение → клиенту сообщение, диалог «требует внимания»",
-        "не получилось подтвердить" in msg
+        "отклонение → клиенту извинение и обещание другого времени, диалог у менеджера",
+        "не получилось сохранить" in msg
+        and "другое время" in msg
         and conv_state(502)["attention_reason"] == "BOOKING_REJECTED",
         msg,
     )
@@ -976,6 +1036,20 @@ with TestClient(app) as c:
         and request.master_id == ivan
         and request.day == D2
         and request.at == time(12, 30),
+    )
+
+    from ai.booking import parse_by_rules  # noqa: E402
+
+    parsed = parse_by_rules("Запишите на 02.10 в 13:00", D1, [], [])
+    check(
+        "дата «02.10» не читается как время 02:10",
+        parsed.at == time(13, 0) and parsed.day is not None and parsed.day.day == 2,
+        str(parsed),
+    )
+    check(
+        "«без разницы» распознаётся, «в любой день» — нет",
+        parse_by_rules("без разницы", D1, [], []).any_master
+        and not parse_by_rules("в любой день после обеда", D1, [], []).any_master,
     )
 
     # ----------------------------------------------------------------------- #
