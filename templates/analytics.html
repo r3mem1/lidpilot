@@ -12,7 +12,7 @@
   <form class="sheet-body" method="get" action="/cabinet/{{ business_id }}/analytics">
     <div class="period">
       <div class="tabs" aria-label="Готовые периоды">
-        {% for d in [7, 30, 90] %}<a class="tab" href="?days={{ d }}" aria-current="{{ 'true' if days == d else 'false' }}">{{ d }} дн.</a>{% endfor %}
+        {% for d in [7, 30, 90] %}<a class="tab" href="?days={{ d }}"{% if days == d %} aria-current="true"{% endif %}>{{ d }} дн.</a>{% endfor %}
       </div>
       <div class="field"><label for="a-from">С</label><input class="input input--small" id="a-from" name="date_from" type="date" value="{{ date_from }}"></div>
       <div class="field"><label for="a-to">По</label><input class="input input--small" id="a-to" name="date_to" type="date" value="{{ date_to }}"></div>

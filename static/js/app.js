@@ -62,10 +62,36 @@
     var host = $("#toasts");
     if (!host) return;
     var node = document.createElement("div");
-    node.className = "toast" + (kind === "error" ? " toast--error" : "");
-    node.textContent = text;
+    if (kind !== "error") {
+      node.className = "toast";
+      node.textContent = text;
+      host.appendChild(node);
+      setTimeout(function () { node.remove(); }, 3500);
+      return;
+    }
+    /* Ошибка объявляется сразу (alert) и не пропадает, пока её читают: таймер
+       на паузе под курсором и фокусом, есть кнопка закрытия. */
+    node.className = "toast toast--error";
+    node.setAttribute("role", "alert");
+    var body = document.createElement("span");
+    body.textContent = text;
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", "Закрыть уведомление");
+    close.textContent = "×";
+    close.addEventListener("click", function () { node.remove(); });
+    node.appendChild(body);
+    node.appendChild(close);
     host.appendChild(node);
-    setTimeout(function () { node.remove(); }, kind === "error" ? 7000 : 3500);
+    var timer = null;
+    var arm = function () { timer = setTimeout(function () { node.remove(); }, 10000); };
+    var hold = function () { clearTimeout(timer); };
+    node.addEventListener("mouseenter", hold);
+    node.addEventListener("focusin", hold);
+    node.addEventListener("mouseleave", arm);
+    node.addEventListener("focusout", arm);
+    arm();
   }
 
   function confirmDialog(text, okLabel) {
@@ -122,18 +148,34 @@
     return data;
   }
 
+  /* Ошибка поля связана с ним через aria-describedby (её прочитает скринридер),
+     фокус переходит на первое неверное поле. */
+  var errorSeq = 0;
   function showFieldErrors(form, errors) {
-    $$(".field-error", form).forEach(function (node) { node.remove(); });
+    $$(".field-error", form).forEach(function (note) {
+      var owner = form.querySelector("[aria-describedby~='" + note.id + "']");
+      if (owner) {
+        var rest = owner.getAttribute("aria-describedby").split(/\s+/).filter(function (id) { return id && id !== note.id; });
+        if (rest.length) owner.setAttribute("aria-describedby", rest.join(" ")); else owner.removeAttribute("aria-describedby");
+      }
+      note.remove();
+    });
     $$("[aria-invalid]", form).forEach(function (node) { node.removeAttribute("aria-invalid"); });
+    var first = null;
     Object.keys(errors).forEach(function (name) {
       var input = form.elements[name];
       if (!input || !input.setAttribute) return;
       input.setAttribute("aria-invalid", "true");
       var note = document.createElement("span");
       note.className = "field-error";
+      note.id = "field-error-" + (++errorSeq);
       note.textContent = HAS_CYRILLIC.test(errors[name]) ? errors[name] : "Проверьте это поле.";
       if (input.parentNode) input.parentNode.appendChild(note);
+      var described = input.getAttribute("aria-describedby");
+      input.setAttribute("aria-describedby", described ? described + " " + note.id : note.id);
+      if (!first) first = input;
     });
+    if (first && first.focus) first.focus();
   }
 
   function finish(target, res) {
@@ -202,12 +244,45 @@
   });
 
   /* ---------- Списки выбора: data-api-change ---------- */
+  /* Стрелки на закрытом списке меняют значение и сразу шлют change (Chrome и
+     Яндекс.Браузер на Windows): иначе перебор статусов сохранял бы каждый.
+     С клавиатуры сохраняем по Enter или уходу со списка, Escape — отмена;
+     выбор мышью или касанием сохраняется сразу. */
+  var isApiSelect = function (node) { return node && node.matches && node.matches("select[data-api-change]"); };
+
   document.addEventListener("focusin", function (event) {
-    if (event.target.matches && event.target.matches("select[data-api-change]")) event.target.dataset.prev = event.target.value;
+    if (isApiSelect(event.target)) event.target.dataset.prev = event.target.value;
+  });
+  document.addEventListener("pointerdown", function (event) {
+    if (isApiSelect(event.target)) delete event.target.dataset.keyboard;
+  });
+  document.addEventListener("keydown", function (event) {
+    var select = event.target;
+    if (!isApiSelect(select)) return;
+    if (event.key === "Enter") {
+      if (select.dataset.pending) { event.preventDefault(); commitSelect(select); }
+      return;
+    }
+    if (event.key === "Escape") {
+      if (select.dataset.pending) { select.value = select.dataset.prev; delete select.dataset.pending; }
+      return;
+    }
+    if (event.key !== "Tab") select.dataset.keyboard = "true";
+  });
+  document.addEventListener("focusout", function (event) {
+    if (isApiSelect(event.target) && event.target.dataset.pending) commitSelect(event.target);
   });
   document.addEventListener("change", function (event) {
     var select = event.target;
-    if (!select.matches || !select.matches("select[data-api-change]")) return;
+    if (!isApiSelect(select)) return;
+    if (select.dataset.keyboard) { select.dataset.pending = "true"; return; }
+    commitSelect(select);
+  });
+
+  function commitSelect(select) {
+    delete select.dataset.pending;
+    delete select.dataset.keyboard;
+    if (select.value === select.dataset.prev) return;
     var body = {};
     body[select.dataset.field] = convert(select);
     var previous = select.dataset.prev;
@@ -222,7 +297,7 @@
         toast(errorMessage(res), "error");
       }
     });
-  });
+  }
 
   /* ---------- Кнопки-действия: data-api-click ---------- */
   document.addEventListener("click", function (event) {
@@ -267,15 +342,31 @@
       return;
     }
     if (event.target.closest && event.target.closest("[data-reload]")) { window.location.reload(); return; }
-    var toggle = event.target.closest && event.target.closest("[data-nav-toggle]");
-    if (toggle) {
-      var open = document.body.classList.toggle("nav-open");
-      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (event.target.closest && event.target.closest("[data-nav-toggle]")) {
+      setNav(!document.body.classList.contains("nav-open"));
       return;
     }
     if (document.body.classList.contains("nav-open") && !(event.target.closest && event.target.closest(".rail"))) {
-      document.body.classList.remove("nav-open");
+      setNav(false);
     }
+  });
+
+  /* Мобильное меню: при открытии фокус в меню, Escape закрывает и возвращает
+     фокус на кнопку «Меню» (закрытое меню скрыто от Tab через visibility в CSS). */
+  function setNav(open) {
+    var toggle = $("[data-nav-toggle]");
+    var wasOpen = document.body.classList.contains("nav-open");
+    document.body.classList.toggle("nav-open", open);
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open && !wasOpen) {
+      var first = $(".rail a, .rail button, .rail select");
+      if (first) first.focus();
+    } else if (!open && wasOpen && toggle && $(".rail") && $(".rail").contains(document.activeElement)) {
+      toggle.focus();
+    }
+  }
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && document.body.classList.contains("nav-open")) setNav(false);
   });
 
   document.addEventListener("change", function (event) {

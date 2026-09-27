@@ -15,16 +15,16 @@
          data-last-message="{{ last_message_id }}">
   <div class="inbox-list">
     <div class="inbox-filters">
-      <div class="tabs" role="tablist" aria-label="Статус диалога">
+      <nav class="tabs" aria-label="Статус диалога">
         {% for key, title in [('', 'Все'), ('NEEDS_ATTENTION', 'Требуют внимания'), ('OPEN', 'Открытые'), ('RESOLVED', 'Решённые')] %}
-          <a class="tab" role="tab" href="{{ base }}{% if key or priority_filter %}?{% if key %}status={{ key }}{% endif %}{% if key and priority_filter %}&amp;{% endif %}{% if priority_filter %}priority={{ priority_filter }}{% endif %}{% endif %}" aria-current="{{ 'true' if status_filter == key else 'false' }}">{{ title }}<span class="n">{{ counts['ALL'] if not key else counts[key] }}</span></a>
+          <a class="tab" href="{{ base }}{% if key or priority_filter %}?{% if key %}status={{ key }}{% endif %}{% if key and priority_filter %}&amp;{% endif %}{% if priority_filter %}priority={{ priority_filter }}{% endif %}{% endif %}" {% if status_filter == key %} aria-current="true"{% endif %}>{{ title }}<span class="n">{{ counts['ALL'] if not key else counts[key] }}</span></a>
         {% endfor %}
-      </div>
-      <div class="tabs" aria-label="Приоритет">
+      </nav>
+      <nav class="tabs" aria-label="Приоритет">
         {% for key, title in [('', 'Любой приоритет'), ('HOT', 'Горячие'), ('WARM', 'Тёплые'), ('COLD', 'Холодные')] %}
-          <a class="tab" href="{{ base }}{% if key or status_filter %}?{% if status_filter %}status={{ status_filter }}{% endif %}{% if status_filter and key %}&amp;{% endif %}{% if key %}priority={{ key }}{% endif %}{% endif %}" aria-current="{{ 'true' if priority_filter == key else 'false' }}">{{ title }}</a>
+          <a class="tab" href="{{ base }}{% if key or status_filter %}?{% if status_filter %}status={{ status_filter }}{% endif %}{% if status_filter and key %}&amp;{% endif %}{% if key %}priority={{ key }}{% endif %}{% endif %}" {% if priority_filter == key %} aria-current="true"{% endif %}>{{ title }}</a>
         {% endfor %}
-      </div>
+      </nav>
     </div>
     <div class="inbox-scroll">
       {% if rows %}
@@ -46,9 +46,11 @@
   </div>
 
   <div class="thread">
-    <div class="newer" data-newer hidden>
-      <span>Пришли новые сообщения.</span>
-      <button class="btn btn--small" type="button" data-reload>Обновить</button>
+    <div role="status">
+      <div class="newer" data-newer hidden>
+        <span>Пришли новые сообщения.</span>
+        <button class="btn btn--small" type="button" data-reload>Обновить</button>
+      </div>
     </div>
     {% if detail %}
       {% set conv = detail.conversation %}

@@ -21,7 +21,7 @@
           <tr>
             <th class="schedule-master">Мастер</th>
             {% for day, weekday in days %}
-              <th class="schedule-day{% if day == today %} is-today{% endif %}">{{ weekday }}<small>{{ day.strftime('%d.%m') }}</small></th>
+              <th class="schedule-day{% if day == today %} is-today{% endif %}"{% if day == today %} aria-current="date"{% endif %}>{{ weekday }}<small>{{ day.strftime('%d.%m') }}{% if day == today %} · сегодня{% endif %}</small></th>
             {% endfor %}
           </tr>
         </thead>
