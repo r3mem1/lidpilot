@@ -27,11 +27,15 @@ class DbScheduleProvider:
         db: Session,
         business: Business,
         *,
-        conversation_id: int,
-        customer_id: int,
+        conversation_id: int | None,
+        customer_id: int | None,
         client_name: str,
+        dry_run: bool = False,
     ) -> None:
         self._db = db
+        # «Проверка ответа» в кабинете: бронь не ставится, только проверяется,
+        # что окно действительно свободно (ничего в БД не пишется).
+        self._dry_run = dry_run
         self._business_id = business.id
         self._tz = schedule_service.business_tz(business)
         self._conversation_id = conversation_id
@@ -94,6 +98,17 @@ class DbScheduleProvider:
         service = self._db.get(Service, service_id)
         if master is None or service is None:
             return None
+        if self._dry_run:
+            local_day = starts_at.astimezone(self._tz).date()
+            free = booking_service.free_slots(
+                self._db,
+                self._business(),
+                service,
+                day_from=local_day,
+                day_to=local_day,
+                master_id=master_id,
+            )
+            return 0 if any(slot.starts_at == starts_at for slot in free) else None
         try:
             booking = booking_service.create_booking(
                 self._db,
@@ -129,6 +144,8 @@ class DbScheduleProvider:
 
     # -- память диалога --------------------------------------------------------- #
     def _last_booking_details(self) -> dict | None:
+        if self._conversation_id is None:  # проверка ответа — без истории диалога
+            return None
         details = self._db.scalar(
             select(AiResponse.details)
             .join(Message, Message.id == AiResponse.message_id)
@@ -168,16 +185,30 @@ class DbScheduleProvider:
         return (service_id if isinstance(service_id, int) else None), options
 
 
+def _booking_ready(db: Session, business: Business) -> bool:
+    if not business.booking_enabled:
+        return False
+    has_master = db.scalar(
+        select(Master.id).where(Master.business_id == business.id, Master.active.is_(True)).limit(1)
+    )
+    return has_master is not None
+
+
+def for_preview(db: Session, business: Business) -> DbScheduleProvider | None:
+    """Расписание для «Проверки ответа»: те же окна, что увидит клиент, но бронь
+    не создаётся (dry_run) — в кабинете виден ответ «Готово, вы записаны»."""
+    if not _booking_ready(db, business):
+        return None
+    return DbScheduleProvider(
+        db, business, conversation_id=None, customer_id=None, client_name="Проверка", dry_run=True
+    )
+
+
 def for_conversation(
     db: Session, business: Business, *, conversation_id: int, customer_id: int, client_name: str
 ) -> DbScheduleProvider | None:
     """Провайдер, если AI-запись включена и есть активные мастера; иначе None."""
-    if not business.booking_enabled:
-        return None
-    has_master = db.scalar(
-        select(Master.id).where(Master.business_id == business.id, Master.active.is_(True)).limit(1)
-    )
-    if has_master is None:
+    if not _booking_ready(db, business):
         return None
     return DbScheduleProvider(
         db,

@@ -1112,6 +1112,45 @@ with TestClient(app) as c:
     )
     c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"booking_enabled": True})
 
+    # «Проверка ответа» видит расписание и показывает текст клиенту, но записей
+    # не создаёт (решение 2026-09-28, аудит прода).
+    free_now = c.get(
+        f"/businesses/{biz_a}/availability",
+        headers=H["manager_a"],
+        params={"service_id": cut, "date_from": iso(D2), "date_to": iso(D3)},
+    ).json()
+    bookings_before = db_rows("SELECT COUNT(*) AS n FROM bookings")[0]["n"]
+    slot = free_now[0] if free_now else {"local_start": iso(D3) + "T12:00"}
+    slot_day = datetime.fromisoformat(slot["local_start"][:10]).strftime("%d.%m")
+    slot_time = slot["local_start"][11:16]
+    pv = c.post(
+        f"/businesses/{biz_a}/ai/preview",
+        headers=H["owner_a"],
+        json={"text": f"Запишите на стрижку {slot_day} в {slot_time}"},
+    ).json()
+    check(
+        "проверка ответа: клиент увидел бы «вы записаны» с тем же временем",
+        pv["decision"] == "SEND"
+        and pv["booking"] == "HOLD"
+        and "вы записаны" in (pv["client_reply"] or "")
+        and slot_time in (pv["client_reply"] or ""),
+        str(pv),
+    )
+    check(
+        "проверка ответа не создала запись",
+        db_rows("SELECT COUNT(*) AS n FROM bookings")[0]["n"] == bookings_before,
+    )
+    pv = c.post(
+        f"/businesses/{biz_a}/ai/preview",
+        headers=H["owner_a"],
+        json={"text": "на какое время свободно на стрижку послезавтра?"},
+    ).json()
+    check(
+        "проверка ответа: реальные окна из расписания",
+        pv["booking"] == "OFFER" and "Свободное время" in (pv["client_reply"] or ""),
+        str(pv.get("client_reply")),
+    )
+
     print("\n=== 8. Решение по брони → сообщение клиенту ===")
     hold_501 = bookings_of(501)[0]["id"]
     before = len(fake.sent(501))

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from ai.context import HistoryTurn
+from ai.pipeline import Decision
 from config import settings
 from database import get_db
 from models import MemberRole, Service, User
@@ -42,6 +43,7 @@ from schemas import (
 from services import (
     ai_service,
     analytics_service,
+    booking_ai_provider,
     business_service,
     rate_limit_service,
     schedule_service,
@@ -218,12 +220,16 @@ def ai_preview(
         )
 
     history = [HistoryTurn(role=turn.role, text=turn.text) for turn in payload.history]
+    # Вне ТЗ (§22): то же расписание, что увидит клиент, но без записи в БД —
+    # проверка показывает реальные окна и «Готово, вы записаны», брони не создаёт.
+    schedule = booking_ai_provider.for_preview(db, ctx.business)
     result = ai_service.process_message(
         db,
         ctx.business,
         payload.text,
         history=history,
         actor_user_id=ctx.user.id,
+        schedule=schedule,
     )
 
     return AIPreviewResponse(
@@ -240,6 +246,8 @@ def ai_preview(
         model=result.response.model if result.response else None,
         prompt_version=result.response.prompt_version if result.response else None,
         latency_ms=result.latency_ms,
+        client_reply=result.reply_text if result.decision is Decision.SEND else result.safe_reply,
+        booking=result.booking.kind.value if result.booking else None,
     )
 
 

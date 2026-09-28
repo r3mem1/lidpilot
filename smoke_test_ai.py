@@ -58,7 +58,13 @@ from ai.llm_client import (  # noqa: E402
     OpenAICompatibleLLMClient,
     extract_json_object,
 )
-from ai.pipeline import AIPipeline, Decision, EscalationReason, normalize  # noqa: E402
+from ai.pipeline import (  # noqa: E402
+    AIPipeline,
+    Decision,
+    EscalationReason,
+    normalize,
+    safe_reply_for,
+)
 from ai.responder import GeneratedResponse, ResponseSource  # noqa: E402
 from ai.validator import ResponseValidator, ViolationCode  # noqa: E402
 from config import settings  # noqa: E402
@@ -614,6 +620,18 @@ with TestClient(app) as c:
         body["intent"] == "PRICE" and body["priority"] == "WARM",
     )
     check("preview: причина классификации сохранена", bool(body["reason"]))
+    check("preview: при SEND клиент получит ответ модели", body["client_reply"] == body["reply"])
+    complaint = c.post(
+        f"/businesses/{biz['id']}/ai/preview",
+        headers=h,
+        json={"text": "Отвратительно подстригли, верните деньги"},
+    ).json()
+    check(
+        "preview: при передаче менеджеру виден шаблон, который получит клиент",
+        complaint["decision"] == "ESCALATE"
+        and complaint["client_reply"] == safe_reply_for(EscalationReason.COMPLAINT),
+        str(complaint.get("client_reply")),
+    )
     check(
         "preview: указаны модель и версия промпта",
         body["model"] == "fake-model" and body["prompt_version"] == "responder-v3",
@@ -762,7 +780,6 @@ check(
 )
 
 print("\n=== 13. Регрессии аудита этапа 2 (разделы 6.6, 6.7, 12.3) ===")
-from ai.pipeline import safe_reply_for  # noqa: E402
 from ai.prompts import build_responder_messages  # noqa: E402
 
 validator = ResponseValidator()

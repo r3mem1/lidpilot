@@ -56,7 +56,7 @@
           <div class="field">
             <label for="preview-text">Сообщение клиента</label>
             <textarea class="textarea" id="preview-text" name="text" required maxlength="4000" data-submit-hotkey placeholder="Сколько стоит стрижка и борода?"></textarea>
-            <span class="hint">Сохранённые настройки и прайс применяются сразу. Ничего клиентам не отправляется.</span>
+            <span class="hint">Сохранённые настройки, прайс и расписание применяются сразу. Клиентам ничего не отправляется, записи не создаются.</span>
           </div>
           <div class="form-actions">
             <button class="btn btn--primary" type="submit">Проверить</button>
@@ -65,7 +65,7 @@
         </form>
         <div class="why" data-preview-result hidden>
           <b data-preview-decision></b>
-          <span data-preview-reply></span>
+          <span class="preview-reply" data-preview-reply></span>
           <span class="muted" data-preview-meta></span>
         </div>
       {% else %}

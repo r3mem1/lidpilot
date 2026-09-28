@@ -148,20 +148,34 @@
         var d = res.data;
         var box = $("[data-preview-result]");
         box.hidden = false;
-        $("[data-preview-decision]", box).textContent = d.decision === "SEND"
-          ? "Ассистент ответил бы так:"
-          : "Ассистент передал бы диалог вам";
+        /* Показываем ровно то, что получит клиент (решение 2026-09-28, аудит прода):
+           ответ AI, шаблон при передаче вам или ответ по расписанию. */
+        var sends = d.decision === "SEND";
+        $("[data-preview-decision]", box).textContent = d.client_reply
+          ? (sends ? "Клиент получит ответ:" : "Клиент получит ответ, а диалог перейдёт к вам:")
+          : "Клиенту ничего не отправится — диалог перейдёт к вам";
+        var reply = $("[data-preview-reply]", box);
+        reply.textContent = d.client_reply || "";
+        reply.hidden = !d.client_reply;
         var reasons = {
-          HOT_LEAD_CONFIRMATION: "запись требует подтверждения человеком", COMPLAINT: "жалоба клиента", MISSING_DATA: "не хватает данных для ответа",
-          AMBIGUOUS_REQUEST: "неясный запрос", ACTION_NOT_ALLOWED: "просьба вне прав ассистента", EXTERNAL_API_ERROR: "сбой AI-сервиса",
-          VALIDATION_FAILED: "ответ не прошёл проверку на выдуманные данные", SPAM_SUSPECTED: "похоже на спам", AUTO_REPLY_DISABLED: "автоответы отключены", CLIENT_NOTICE: "клиент предупреждает об опоздании"
+          HOT_LEAD_CONFIRMATION: "запись подтверждает человек", COMPLAINT: "жалоба клиента", MISSING_DATA: "в данных компании нет ответа",
+          AMBIGUOUS_REQUEST: "непонятно, что хочет клиент", ACTION_NOT_ALLOWED: "просьба вне прав ассистента", EXTERNAL_API_ERROR: "сбой AI-сервиса",
+          VALIDATION_FAILED: "ответ модели не прошёл проверку на выдуманные данные", SPAM_SUSPECTED: "похоже на спам", AUTO_REPLY_DISABLED: "автоответы выключены", CLIENT_NOTICE: "клиент предупреждает об опоздании"
         };
-        $("[data-preview-reply]", box).textContent = d.decision === "SEND"
-          ? d.reply
-          : "Причина: " + (reasons[d.escalation_reason] || d.escalation_reason || "нужен человек") + ".";
-        var meta = "Намерение: " + d.intent + ", приоритет: " + d.priority + ".";
-        if (d.model) meta += " Модель: " + d.model + (d.latency_ms != null ? ", " + d.latency_ms + " мс." : ".");
-        $("[data-preview-meta]", box).textContent = meta;
+        var intents = { PRICE: "цена", BOOKING: "запись", QUESTION: "вопрос", COMPLAINT: "жалоба", OTHER: "другое", SPAM: "спам" };
+        var priorities = { HOT: "горячий", WARM: "тёплый", COLD: "холодный" };
+        var model = d.model || "";
+        var source = model === "faq-template" ? "данные компании (без AI-модели)"
+          : model.indexOf("booking-engine") === 0 ? "расписание мастеров"
+          : model ? "AI-модель " + model : "";
+        var lines = [];
+        if (!sends) lines.push("Почему у вас: " + (reasons[d.escalation_reason] || d.escalation_reason || "нужен человек") + ".");
+        if (d.booking === "HOLD") lines.push("Это проверка — запись в расписании не создана.");
+        var meta = "Намерение: " + (intents[d.intent] || d.intent) + ", приоритет: " + (priorities[d.priority] || d.priority) + ".";
+        if (source) meta += " Источник ответа: " + source + ".";
+        if (d.latency_ms != null) meta += " Время: " + d.latency_ms + " мс.";
+        lines.push(meta);
+        $("[data-preview-meta]", box).textContent = lines.join(" ");
       });
     });
   }

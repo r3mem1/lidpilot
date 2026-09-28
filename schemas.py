@@ -295,6 +295,12 @@ class AIPreviewResponse(BaseModel):
     model: str | None = None
     prompt_version: str | None = None
     latency_ms: int
+    # Что именно получит клиент: ответ AI, шаблон при передаче менеджеру или ответ
+    # движка записи; None — клиенту ничего не отправится (автоответы выключены).
+    client_reply: str | None = None
+    # Вне ТЗ (§22): итог движка записи (HOLD, OFFER, ASK_SERVICE, NO_SLOTS);
+    # в проверке бронь не создаётся.
+    booking: str | None = None
 
 
 # --------------------------------------------------------------------------- #

@@ -316,6 +316,7 @@ with TestClient(app) as c:
         "проверка ответа учитывает настройку",
         pv["decision"] == "ESCALATE" and pv["escalation_reason"] == "AUTO_REPLY_DISABLED",
     )
+    check("проверка ответа: клиенту ничего не отправится", pv["client_reply"] is None)
     c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"ai_auto_reply": True})
     pv = c.post(
         f"/businesses/{biz_a}/ai/preview",
