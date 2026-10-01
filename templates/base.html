@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light dark">
   <title>{{ title }} — LeadPilot</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/css/styles.css">
-  <script src="/static/js/app.js" defer></script>
+  <link rel="stylesheet" href="{{ asset('css/styles.css') }}">
+  <script src="{{ asset('js/app.js') }}" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body{% block body_attrs %}{% endblock %}>

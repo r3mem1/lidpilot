@@ -130,12 +130,25 @@ def create_master(
     return master
 
 
-def ensure_master_for_member(db: Session, business_id: int, user: User) -> Master:
+def ensure_master_for_member(
+    db: Session, business_id: int, user: User, *, link_master_id: int | None = None
+) -> Master:
     """Профиль мастера для участника с ролью MASTER (при принятии приглашения или
-    смене роли). Вызывается внутри транзакции вызывающего кода."""
+    смене роли). Вызывается внутри транзакции вызывающего кода.
+
+    link_master_id — мастер без аккаунта из приглашения: сотрудник становится им,
+    его смены и записи сохраняются (проверка сайта 2026-10-01: раньше создавался
+    дубль с именем из email)."""
     master = db.scalar(
         select(Master).where(Master.business_id == business_id, Master.user_id == user.id)
     )
+    if master is None and link_master_id is not None:
+        linked = db.get(Master, link_master_id)
+        if linked is not None and linked.business_id == business_id and linked.user_id is None:
+            linked.user_id = user.id
+            linked.active = True
+            db.flush()
+            return linked
     if master is None:
         name = user.email.split("@", 1)[0]
         master = Master(business_id=business_id, user_id=user.id, display_name=name[:120])

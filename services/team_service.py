@@ -27,6 +27,7 @@ from models import (
     BusinessMember,
     Invitation,
     Lead,
+    Master,
     MemberRole,
     User,
     utcnow,
@@ -143,10 +144,29 @@ def _is_pending(invitation: Invitation) -> bool:
 
 
 def create_invitation(
-    db: Session, ctx: BusinessContext, email: str, role: MemberRole
+    db: Session,
+    ctx: BusinessContext,
+    email: str,
+    role: MemberRole,
+    master_id: int | None = None,
 ) -> tuple[Invitation, str]:
-    """Создать приглашение. Возвращает (запись, токен): токен показывается один раз."""
+    """Создать приглашение. Возвращает (запись, токен): токен показывается один раз.
+    master_id (только роль MASTER) — мастер этой компании без аккаунта, к которому
+    привяжется сотрудник."""
     email = email.strip().lower()
+    if master_id is not None:
+        if role is not MemberRole.MASTER:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Привязать к мастеру можно только приглашение с ролью «Мастер»",
+            )
+        master = db.get(Master, master_id)
+        if master is None or master.business_id != ctx.business_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Мастер не найден")
+        if master.user_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="У этого мастера уже есть аккаунт"
+            )
     existing_user = get_user_by_email(db, email)
     if existing_user is not None:
         already = db.scalar(
@@ -177,6 +197,7 @@ def create_invitation(
         token_hash=hash_token(token),
         expires_at=utcnow() + timedelta(days=settings.invitation_ttl_days),
         created_by=ctx.user.id,
+        master_id=master_id,
     )
     db.add(invitation)
     db.flush()
@@ -186,7 +207,12 @@ def create_invitation(
         message=f"Создано приглашение для {email} ({role.value})",
         business_id=ctx.business_id,
         actor_user_id=ctx.user.id,
-        payload={"invitation_id": invitation.id, "email": email, "role": role.value},
+        payload={
+            "invitation_id": invitation.id,
+            "email": email,
+            "role": role.value,
+            "master_id": master_id,
+        },
     )
     db.commit()
     db.refresh(invitation)
@@ -258,7 +284,9 @@ def accept_invitation(db: Session, user: User, token: str) -> tuple[BusinessMemb
         db.add(member)
     if member.role is MemberRole.MASTER:
         # Мастер сразу получает профиль: расписание и записи (вне ТЗ, §22).
-        master_service.ensure_master_for_member(db, invitation.business_id, user)
+        master_service.ensure_master_for_member(
+            db, invitation.business_id, user, link_master_id=invitation.master_id
+        )
     invitation.accepted_at = utcnow()
     invitation.accepted_by = user.id
     audit_service.log_event(

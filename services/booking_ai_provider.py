@@ -193,7 +193,7 @@ class DbScheduleProvider:
             BookingKind.WINDOWS.value,
         )
 
-    def last_context(self) -> tuple[BookingKind, BookingRequest] | None:
+    def last_context(self) -> tuple[BookingKind, BookingRequest, list[int]] | None:
         """Сказанное клиентом до списка окон / вопроса об услуге. Каждое поле
         перепроверяется по текущим данным компании; прошедший день отбрасывается."""
         booking = self._last_booking_details()
@@ -214,12 +214,23 @@ class DbScheduleProvider:
         except (TypeError, ValueError):
             day = at = None
         part = ctx.get("part_of_day")
-        return BookingKind(booking["kind"]), BookingRequest(
-            service_id=service_id if service_id in {s.id for s in self.services()} else None,
-            master_id=master_id if master_id in dict(self.masters()) else None,
-            day=day if day and day >= self.today else None,
-            at=at,
-            part_of_day=part if part in ("morning", "day", "evening") else None,
+        service_ids = {s.id for s in self.services()}
+        # Номера услуг сохраняют позиции: снятая с записи услуга не сдвигает остальные.
+        options = [
+            sid if sid in service_ids else 0
+            for sid in booking.get("service_options") or []
+            if isinstance(sid, int)
+        ]
+        return (
+            BookingKind(booking["kind"]),
+            BookingRequest(
+                service_id=service_id if service_id in service_ids else None,
+                master_id=master_id if master_id in dict(self.masters()) else None,
+                day=day if day and day >= self.today else None,
+                at=at,
+                part_of_day=part if part in ("morning", "day", "evening") else None,
+            ),
+            options,
         )
 
     def last_offer(self) -> tuple[int | None, list[SlotOption]]:

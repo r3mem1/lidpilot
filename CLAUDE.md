@@ -61,7 +61,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head                   # миграции; новая: alembic revision --autogenerate -m "..."
 uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
-python smoke_test_ai.py                # 170 проверок этапа 2
+python smoke_test_ai.py                # 173 проверки этапа 2
 python smoke_test_stage3.py            # 149 проверок этапа 3 (+ серия сообщений, контроль ответа)
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 182 проверки этапа 5
@@ -69,7 +69,7 @@ python smoke_test_stage6.py            # 134 проверки этапа 6
 python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
 python smoke_test_stage8.py            # 43 проверки этапа 8 (подписка, onboarding + шаг «запись к мастерам»)
 python smoke_test_stage9.py            # 71 проверка этапа 9 (VK, rate limit в БД)
-python smoke_test_stage10.py           # 147 проверок: мастера, расписание, записи, AI-запись (окна — интервалами мастеров, части дня), заявки без брони, проверка ответа, уведомления
+python smoke_test_stage10.py           # 170 проверок: мастера, расписание, записи, перенос, AI-запись (окна по мастерам, услуга по части названия), приглашение к мастеру, заявки без брони, проверка ответа, уведомления
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)
@@ -89,7 +89,7 @@ Hook `scripts/hooks/ruff_after_edit.py` проверяет правленый `.
 - Не добавлять endpoint'ы вне §11 без явного пометки «вне ТЗ» (как `ai/preview`, выключен флагом).
 
 ## Инструменты, настроенные для проекта
-- **Агенты** (`.claude/agents/`, 9) и **скиллы** (`.claude/skills/`, 9: `tenant-isolation-check`, `ai-guardrails-check`, `telegram-webhook`, `add-endpoint`, `acceptance-check`, `stage-runbook`,
+- **Агенты** (`.claude/agents/`, 9) и **скиллы** (`.claude/skills/`, 10: `site-qa` (проверка сайта глазами пользователя, стенд `scripts/qa_stand.py`), `tenant-isolation-check`, `ai-guardrails-check`, `telegram-webhook`, `add-endpoint`, `acceptance-check`, `stage-runbook`,
   `admin-panel` (этап 6), `prod-readiness` (этап 7), `add-channel` (этап 9)) — какие подключать на этапе, см. `stage-runbook`.
 - **Плагины** (project scope, включены): pyright-lsp, code-review, security-guidance, commit-commands. Глобально: context7 (актуальные доки), frontend-design.
   Выключены в `.claude/settings.json` ради токенов (каждый включённый плагин/MCP добавляет описания в каждый ход; вернуть `true` к нужному этапу):

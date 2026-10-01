@@ -90,7 +90,9 @@ def create_invitation(
     db: Session = Depends(get_db),
 ):
     """Ссылка-приглашение возвращается один раз; передайте её сотруднику сами."""
-    invitation, token = team_service.create_invitation(db, ctx, payload.email, payload.role)
+    invitation, token = team_service.create_invitation(
+        db, ctx, payload.email, payload.role, payload.master_id
+    )
     return InvitationCreated(
         id=invitation.id,
         email=invitation.email,

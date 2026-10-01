@@ -39,6 +39,7 @@ LABELS: dict[str, dict[str, str]] = {
         "SPAM_SUSPECTED": "Похоже на спам",
         "AUTO_REPLY_DISABLED": "Автоответы отключены",
         "CLIENT_NOTICE": "Клиент предупреждает (опоздание)",
+        "BOOKING_CHANGE": "Клиент просит перенести или отменить запись",
         "DELIVERY_FAILED": "Сообщение не доставлено",
         "PROCESSING_FAILED": "Не удалось обработать",
         "BUSINESS_SUSPENDED": "Компания приостановлена",

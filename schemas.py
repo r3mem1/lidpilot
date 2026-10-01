@@ -482,6 +482,8 @@ class MemberRoleUpdate(BaseModel):
 
 class InvitationCreate(_EmailMixin):
     role: MemberRole = MemberRole.MANAGER
+    # Только для роли MASTER: мастер без аккаунта, к которому привязать сотрудника.
+    master_id: int | None = Field(default=None, ge=1)
 
 
 class InvitationOut(BaseModel):
@@ -682,6 +684,14 @@ class BookingCreate(BaseModel):
     # Вне ТЗ (§22): запись по заявке клиента — привязка к его диалогу, клиенту
     # уходит «Готово, вы записаны», заявка закрывается.
     request_id: int | None = Field(default=None, ge=1)
+
+
+class BookingReschedule(BaseModel):
+    """Перенос записи сотрудником: новое время в поясе компании, мастер — по желанию."""
+
+    day: date
+    start_time: time
+    master_id: int | None = Field(default=None, ge=1)
 
 
 class BookingOut(ORMModel):

@@ -29,6 +29,7 @@ from ai.booking import (
     RequestDraft,
     ScheduleProvider,
     render_request_reply,
+    service_candidates,
     summarize_request,
 )
 from ai.classifier import (
@@ -74,6 +75,9 @@ class EscalationReason(str, enum.Enum):
     # Решение 2026-09-28: клиент предупреждает (опоздание) — ответ шаблоном,
     # администратор видит диалог.
     CLIENT_NOTICE = "CLIENT_NOTICE"
+    # Проверка сайта 2026-10-01: «перенести / отменить запись» — отдельная причина,
+    # а не «нужно подтвердить время» (менеджер сразу видит, что делать).
+    BOOKING_CHANGE = "BOOKING_CHANGE"
 
 
 @dataclass(frozen=True)
@@ -196,7 +200,18 @@ REPLY_LATE = (
 # Без слов «скидка/акция»: иначе шаблон сам нарушал бы правило валидатора.
 REPLY_DISCOUNT = "Про специальные предложения уточню у администратора — он ответит здесь."
 
+# Шаг записи по расписанию для причины лида — по-русски: причина видна в кабинете
+# (проверка сайта 2026-10-01: там были служебные коды WINDOWS, ASK_SERVICE).
+BOOKING_STEP: dict[BookingKind, str] = {
+    BookingKind.HOLD: "поставлена бронь",
+    BookingKind.OFFER: "предложено свободное время",
+    BookingKind.ASK_SERVICE: "уточняется услуга",
+    BookingKind.WINDOWS: "названо свободное время мастеров",
+    BookingKind.NO_SLOTS: "свободного времени нет",
+}
+
 _SAFE_REPLIES: dict[EscalationReason, str | None] = {
+    EscalationReason.BOOKING_CHANGE: REPLY_CANCEL,
     EscalationReason.HOT_LEAD_CONFIRMATION: REPLY_BOOKING_REQUEST,
     EscalationReason.COMPLAINT: (
         "Сожалеем, что так вышло. Передали ваше обращение ответственному сотруднику — "
@@ -267,6 +282,16 @@ def _booking_dialog_texts(history: list[HistoryTurn], limit: int = 4) -> list[st
 
 def _booking_services(knowledge: BusinessKnowledge) -> list[BookableService]:
     return [BookableService(i, s.name) for i, s in enumerate(knowledge.services, 1)]
+
+
+def _looks_like_booking(knowledge: BusinessKnowledge, text: str) -> bool:
+    """Услуга из прайса (хотя бы частью названия) и день/время, или мастер и время."""
+    draft = _booking_draft(knowledge, [text])
+    if draft is None:
+        return False
+    service = draft.service or service_candidates(text, _booking_services(knowledge))
+    when = draft.day or draft.at or draft.part_of_day
+    return bool((service and when) or (draft.master and draft.at))
 
 
 def _booking_draft(knowledge: BusinessKnowledge, texts: list[str]) -> RequestDraft | None:
@@ -368,6 +393,22 @@ class AIPipeline:
         # Шаги Intent + Priority classification.
         classification = self._classifier.classify(normalized, history, knowledge)
 
+        # Проверка сайта 2026-10-01: «давайте завтра в 12 к Ивану на стрижку» — запись,
+        # хотя слова «запись» нет (без модели правила давали «точной информации нет»).
+        if (
+            classification.intent in (Intent.QUESTION, Intent.OTHER)
+            and not classification.action_not_allowed
+            and _looks_like_booking(knowledge, normalized)
+        ):
+            classification = replace(
+                classification,
+                intent=Intent.BOOKING,
+                priority=Priority.HOT,
+                needs_manager=True,
+                unclear=False,
+                reason=f"{classification.reason}; названы услуга или мастер и время",
+            )
+
         # Вне ТЗ (§22): запись по расписанию. Жалоба, спам и попытка обхода правил
         # по-прежнему уходят человеку; время и окна — только из расписания в БД.
         if schedule is not None and self._booking_applies(
@@ -429,7 +470,7 @@ class AIPipeline:
         # (инвариант 2), поэтому LLM-ответ здесь не генерируется никогда.
         if classification.intent is Intent.BOOKING and not classification.action_not_allowed:
             if _CANCEL_RE.search(normalized):
-                return escalate(EscalationReason.HOT_LEAD_CONFIRMATION, REPLY_CANCEL)
+                return escalate(EscalationReason.BOOKING_CHANGE, REPLY_CANCEL)
             # Расписания нет: повторяем, что поняли (услуга, день, время), и
             # спрашиваем недостающее; свободно ли время — проверит администратор.
             # Заявка сохраняется для «Записей», даже если деталей пока нет.
@@ -662,7 +703,7 @@ class AIPipeline:
             intent=Intent.BOOKING,
             priority=Priority.HOT,
             needs_manager=outcome.kind in (BookingKind.HOLD, BookingKind.NO_SLOTS),
-            reason=f"{classification.reason}; запись по расписанию: {outcome.kind.value}",
+            reason=f"{classification.reason}; запись по расписанию: {BOOKING_STEP[outcome.kind]}",
         )
         if outcome.kind is BookingKind.NO_SLOTS or not outcome.reply:
             return PipelineResult(

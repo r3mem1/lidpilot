@@ -98,9 +98,10 @@ class ScheduleProvider(Protocol):
         """Последний ответ AI в диалоге — предложение окон или вопрос об услуге."""
         ...
 
-    def last_context(self) -> tuple[BookingKind, BookingRequest] | None:
-        """Что клиент уже назвал (услуга, мастер, день, время), если последний ответ
-        AI — список интервалов или вопрос об услуге; иначе None."""
+    def last_context(self) -> tuple[BookingKind, BookingRequest, list[int]] | None:
+        """Что клиент уже назвал (услуга, мастер, день, время) и какие услуги ему
+        перечислены по номерам, если последний ответ AI — список интервалов или
+        вопрос об услуге; иначе None."""
         ...
 
 
@@ -128,11 +129,14 @@ class BookingOutcome:
     # а не начинает запись заново («в 14 к Петру» после списка окон, «на бороду»
     # после вопроса об услуге).
     context: BookingRequest | None = None
+    # ASK_SERVICE: услуги в порядке номеров в вопросе — ответ «1» выбирает первую.
+    service_options: tuple[int, ...] = ()
 
     def as_dict(self) -> dict:
         ctx = self.context
         return {
             "kind": self.kind.value,
+            "service_options": list(self.service_options),
             "context": {
                 "service_id": ctx.service_id,
                 "master_id": ctx.master_id,
@@ -259,6 +263,9 @@ _WINDOWS_RE = re.compile(
 )
 
 
+_NUMBER_ONLY_RE = re.compile(r"\s*(\d{1,2})\s*[.!)]?\s*")
+
+
 def is_windows_question(text: str) -> bool:
     return bool(_WINDOWS_RE.search(text))
 
@@ -271,23 +278,46 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[а-яёa-z]+", text.lower().replace("ё", "е"))
 
 
+def _text_stems(text: str) -> set[str]:
+    return {_stem(w) for w in _words(text) if len(w) >= 4}
+
+
+def _name_stems(name: str) -> list[str]:
+    return [_stem(w) for w in _words(name) if len(w) >= 4]
+
+
+def service_candidates(text: str, services: list[BookableService]) -> list[int]:
+    """Услуги, в названии которых есть хоть одно слово клиента («на стрижку» →
+    «Мужская стрижка» и «Стрижка бороды»), по убыванию числа совпавших слов."""
+    stems = _text_stems(text)
+    scored = [(sum(s in stems for s in _name_stems(svc.name)), svc.id) for svc in services]
+    return [sid for score, sid in sorted(scored, key=lambda x: -x[0]) if score]
+
+
 def _match_service(text: str, services: list[BookableService]) -> int | None:
     lowered = text.lower().replace("ё", "е")
     best: tuple[int, int] | None = None  # (длина совпадения, id)
-    words = set(_words(text))
-    stems = {_stem(w) for w in words if len(w) >= 4}
+    stems = _text_stems(text)
     for service in services:
         name = service.name.lower().replace("ё", "е")
         if name in lowered:
             score = len(name) * 10
         else:
-            name_stems = [_stem(w) for w in _words(name) if len(w) >= 4]
+            name_stems = _name_stems(name)
             if not name_stems or not all(s in stems for s in name_stems):
                 continue
             score = sum(len(s) for s in name_stems)
         if best is None or score > best[0]:
             best = (score, service.id)
-    return best[1] if best else None
+    if best:
+        return best[1]
+    # Решение 2026-10-01 (проверка сайта): клиенты называют услугу частью названия
+    # («мужская», «на бороду»). Подходит одна услуга — она; несколько поровну — не
+    # угадываем, движок переспросит только между ними.
+    scored = {svc.id: sum(s in stems for s in _name_stems(svc.name)) for svc in services}
+    top = max(scored.values(), default=0)
+    leaders = [sid for sid, score in scored.items() if score == top]
+    return leaders[0] if top and len(leaders) == 1 else None
 
 
 def _match_master(text: str, masters: list[tuple[int, str]]) -> int | None:
@@ -602,7 +632,13 @@ class BookingEngine:
         # Решение заказчика 2026-10-01: сказанное раньше (после списка окон или
         # вопроса об услуге) не теряется — новое сообщение лишь дополняет его.
         if last is not None:
-            _, ctx = last
+            kind, ctx, options = last
+            # Ответ номером на вопрос «На какую услугу?» («1», «2.»).
+            number = _NUMBER_ONLY_RE.fullmatch(text)
+            if kind is BookingKind.ASK_SERVICE and number and request.service_id is None:
+                index = int(number.group(1))
+                if 1 <= index <= len(options):
+                    request = replace(request, service_id=options[index - 1] or None, choice=None)
             request = replace(
                 request,
                 service_id=request.service_id or ctx.service_id,
@@ -636,13 +672,17 @@ class BookingEngine:
         if service_id is None and len(services) == 1:
             service_id = services[0].id
         if service_id is None or service_id not in names:
+            # Слово клиента подходит к нескольким услугам («на стрижку») — спрашиваем
+            # только между ними, иначе — весь список. Номера — чтобы ответить цифрой.
+            matched = [sid for sid in service_candidates(text, services) if sid in names]
+            options = matched if len(matched) > 1 else [s.id for s in services]
+            lines = "\n".join(f"{i}) {names[sid]}" for i, sid in enumerate(options, 1))
             return BookingOutcome(
                 kind=BookingKind.ASK_SERVICE,
-                reply="На какую услугу вас записать? Есть: "
-                + ", ".join(s.name for s in services)
-                + ".",
+                reply=f"На какую услугу вас записать?\n{lines}\nНапишите номер или название.",
                 source=source,
                 context=replace(request, service_id=None, choice=None, agree=False),
+                service_options=tuple(options),
             )
         service_name = names[service_id]
         today = provider.today

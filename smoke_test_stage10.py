@@ -207,6 +207,62 @@ with TestClient(app) as c:
     check("мастер без аккаунта создан", solo.status_code == 201 and solo.json()["user_id"] is None)
     anna = solo.json()["id"]
 
+    # Проверка сайта 2026-10-01: приглашение привязывает сотрудника к заведённому мастеру.
+    viktor = c.post(
+        f"/businesses/{biz_b}/masters", headers=H["owner_b"], json={"display_name": "Виктор"}
+    ).json()["id"]
+    c.post(
+        f"/masters/{viktor}/shifts",
+        headers=H["owner_b"],
+        json={"day": iso(D2), "start_time": "10:00", "end_time": "18:00"},
+    )
+    r = c.post(
+        f"/businesses/{biz_b}/invitations",
+        headers=H["owner_b"],
+        json={"email": "viktor@example.com", "role": "MANAGER", "master_id": viktor},
+    )
+    check("привязка к мастеру только для роли «Мастер» (422)", r.status_code == 422)
+    r = c.post(
+        f"/businesses/{biz_b}/invitations",
+        headers=H["owner_b"],
+        json={"email": "viktor@example.com", "role": "MASTER", "master_id": anna},
+    )
+    check("мастер чужой компании для приглашения — 404", r.status_code == 404)
+    inv = c.post(
+        f"/businesses/{biz_b}/invitations",
+        headers=H["owner_b"],
+        json={"email": "viktor@example.com", "role": "MASTER", "master_id": viktor},
+    ).json()
+    c.post("/auth/register", json={"email": "viktor@example.com", "password": PWD})
+    r = c.post(
+        "/invitations/accept",
+        headers=bearer("viktor@example.com"),
+        json={"token": inv["invite_url"].rsplit("/", 1)[-1]},
+    )
+    masters_b = c.get(f"/businesses/{biz_b}/masters", headers=H["owner_b"]).json()
+    check(
+        "принятое приглашение привязано к «Виктору»: без дубля, имя и смены его",
+        r.status_code in (200, 201)
+        and len(masters_b) == 1
+        and masters_b[0]["display_name"] == "Виктор"
+        and masters_b[0]["user_id"] is not None
+        and len(
+            c.get(
+                f"/businesses/{biz_b}/shifts",
+                headers=H["owner_b"],
+                params={"date_from": iso(D2), "date_to": iso(D2), "master_id": viktor},
+            ).json()
+        )
+        == 1,
+        str(masters_b),
+    )
+    r = c.post(
+        f"/businesses/{biz_b}/invitations",
+        headers=H["owner_b"],
+        json={"email": "other@example.com", "role": "MASTER", "master_id": viktor},
+    )
+    check("у мастера уже есть аккаунт — повторная привязка 409", r.status_code == 409)
+
     # ----------------------------------------------------------------------- #
     print("\n=== 1. Доступ по ролям ===")
     check(
@@ -667,6 +723,11 @@ with TestClient(app) as c:
         "Иван" in html and "Пётр" not in html and "Добавить смену" in html,
     )
     check("в расписании видна запись мастера", "Сергей" in html)
+    html = page_as("master_ivan@example.com", f"/cabinet/{biz_a}/notify").text
+    check(
+        "«Уведомления» подключают pages.js (без него «Получить код» уходит GET без кода)",
+        "/static/js/pages.js" in html,
+    )
     for path in (
         "messages",
         "leads",
@@ -1026,6 +1087,25 @@ with TestClient(app) as c:
         f"{[dict(b) for b in b515]} {reply}",
     )
 
+    # Вопрос об услуге — нумерованный список, клиент отвечает цифрой.
+    reply = say(516, f"запишите меня {d4} в 16:00 к Петру")
+    check(
+        "вопрос об услуге — с номерами и подсказкой ответить номером",
+        "1) Борода" in reply and "2) Стрижка" in reply and "номер" in reply,
+        reply,
+    )
+    reply = say(516, "1")
+    b516 = bookings_of(516)
+    check(
+        "ответ «1» → услуга под этим номером, бронь на названное раньше время",
+        len(b516) == 1
+        and b516[0]["service_id"] == beard
+        and b516[0]["master_id"] == petr
+        and datetime.fromisoformat(b516[0]["starts_at"]).replace(tzinfo=UTC).astimezone(MSK)
+        == datetime.combine(D4, time(16, 0), tzinfo=MSK),
+        f"{[dict(b) for b in b516]} {reply}",
+    )
+
     reply = say(504, "Ужасно подстригли в прошлый раз, запишите на исправление")
     check(
         "жалоба с «запишите» → менеджер, без брони",
@@ -1044,6 +1124,24 @@ with TestClient(app) as c:
         and conv_state(503)["status"] == "NEEDS_ATTENTION"
         and not re.search(r"\d{1,2}:\d{2}", reply),
         reply,
+    )
+    check(
+        "причина — «перенести или отменить запись», а не «нужно подтвердить время»",
+        conv_state(503)["attention_reason"] == "BOOKING_CHANGE",
+        conv_state(503)["attention_reason"],
+    )
+    for path in ("/leads", "", f"/messages?c={conv_state(503)['id']}"):
+        html = page_as("owner_a@example.com", f"/cabinet/{biz_a}{path}").text
+        codes = set(re.findall(r"\b(WINDOWS|ASK_SERVICE|OFFER|NO_SLOTS|HOLD)\b", html))
+        check(
+            f"кабинет{path or ' (обзор)'}: без служебных кодов шага записи", not codes, str(codes)
+        )
+    html = page_as(
+        "owner_a@example.com", f"/cabinet/{biz_a}/messages?c={conv_state(503)['id']}"
+    ).text
+    check(
+        "в диалоге причина по-русски",
+        "Клиент просит перенести или отменить запись" in html,
     )
     colour = c.post(
         f"/businesses/{biz_a}/services",
@@ -1286,6 +1384,58 @@ with TestClient(app) as c:
     reply = say(501, "Спасибо! А сколько стоит борода?")
     check("после подтверждения AI отвечает клиенту как обычно", "800" in reply, reply)
 
+    # Перенос записи (проверка сайта 2026-10-01): одно сообщение «перенесена», без «отменена».
+    def move(booking_id: int, who: str, day: date, at: str, master: int | None = None):
+        body: dict = {"day": iso(day), "start_time": at}
+        if master is not None:
+            body["master_id"] = master
+        return c.post(f"/bookings/{booking_id}/reschedule", headers=H[who], json=body)
+
+    check(
+        "мастер не переносит записи (403)",
+        move(hold_501, "master_ivan", D4, "10:00").status_code == 403,
+    )
+    check(
+        "перенос на занятое время — 409, запись на месте",
+        move(hold_501, "manager_a", D4, "12:00").status_code == 409,
+    )
+    check(
+        "перенос к мастеру, который не делает услугу, — 409",
+        move(hold_501, "manager_a", D4, "17:00", petr).status_code == 409,
+    )
+    check(
+        "чужая компания не переносит (404)",
+        move(hold_501, "owner_b", D4, "10:00").status_code == 404,
+    )
+    before = len(fake.sent(501))
+    r = move(hold_501, "manager_a", D4, "10:00")
+    moved = db_rows("SELECT starts_at, status, master_id FROM bookings WHERE id=?", hold_501)[0]
+    new_msgs = [m["text"] for m in fake.sent(501)[before:]]
+    check(
+        "перенос → новое время в записи, клиенту одно сообщение «перенесена» с новым временем",
+        r.status_code == 200
+        and datetime.fromisoformat(moved["starts_at"]).replace(tzinfo=UTC).astimezone(MSK)
+        == datetime.combine(D4, time(10, 0), tzinfo=MSK)
+        and moved["status"] == "CONFIRMED"
+        and len(new_msgs) == 1
+        and "перенесена" in new_msgs[0]
+        and "10:00" in new_msgs[0]
+        and "отменена" not in new_msgs[0],
+        f"{r.status_code} {new_msgs}",
+    )
+    check(
+        "перенос на своё же время не конфликтует сам с собой",
+        move(hold_501, "manager_a", D4, "10:00").status_code == 200,
+    )
+    check(
+        "в журнале — событие переноса",
+        bool(db_rows("SELECT id FROM system_logs WHERE event_type='BOOKING_RESCHEDULED'")),
+    )
+    check(
+        "отклонённую запись перенести нельзя (409)",
+        move(hold_502, "manager_a", D4, "11:00").status_code == 409,
+    )
+
     print("\n=== 9. Разбор моделью: мусор отбрасывается ===")
     from ai.booking import BookableService, BookingEngine  # noqa: E402
 
@@ -1339,7 +1489,28 @@ with TestClient(app) as c:
         and request.at == time(12, 30),
     )
 
-    from ai.booking import parse_by_rules  # noqa: E402
+    from ai.booking import _match_service, parse_by_rules, service_candidates  # noqa: E402
+
+    # Проверка сайта 2026-10-01: клиенты называют услугу частью названия.
+    price = [
+        BookableService(1, "Камуфляж седины"),
+        BookableService(2, "Мужская стрижка"),
+        BookableService(3, "Стрижка бороды"),
+    ]
+    check(
+        "часть названия: «мужская» → «Мужская стрижка», «на бороду» → «Стрижка бороды»",
+        _match_service("мужская", price) == 2 and _match_service("на бороду", price) == 3,
+    )
+    check(
+        "«на стрижку» подходит к двум услугам → не угадываем, кандидаты — обе",
+        _match_service("на стрижку", price) is None
+        and sorted(service_candidates("на стрижку", price)) == [2, 3],
+    )
+    check(
+        "полное название по-прежнему выигрывает",
+        _match_service("стрижка бороды", price) == 3
+        and _match_service("хочу записаться на завтра", price) is None,
+    )
 
     parsed = parse_by_rules("Запишите на 02.10 в 13:00", D1, [], [])
     check(

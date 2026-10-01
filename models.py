@@ -720,6 +720,11 @@ class Invitation(Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Роль MASTER: уже заведённый мастер без аккаунта, к которому привяжется
+    # принявший приглашение (его смены и записи сохраняются; вне ТЗ, §22).
+    master_id: Mapped[int | None] = mapped_column(
+        ForeignKey("masters.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 # --------------------------------------------------------------------------- #

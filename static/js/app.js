@@ -225,6 +225,8 @@
       }
       showFieldErrors(form, fieldErrors(res));
       var text = errorMessage(res);
+      /* 401 на форме входа — неверный пароль, а не истёкшая сессия: текст сервера. */
+      if (res.status === 401 && form.dataset.url === "/auth/login" && res.data && typeof res.data.detail === "string") text = res.data.detail;
       if (status) status.textContent = text; else toast(text, "error");
       if (res.status === 401 && flow !== "register" && form.dataset.url !== "/auth/login") window.location.assign("/login");
     });

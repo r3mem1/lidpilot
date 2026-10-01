@@ -1,6 +1,6 @@
 {% extends "cabinet_base.html" %}
 {% import "_macros.html" as m %}
-{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block scripts %}<script src="{{ asset('js/pages.js') }}" defer></script>{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
@@ -95,7 +95,7 @@
           {% else %}лид не создан — обращение не похоже на заявку клиента.{% endif %}
         </span>
         {% if detail.last_decision %}
-          <span class="muted">{{ label('ai_status', detail.last_decision.status) }}{% if detail.last_decision.model %}, модель {{ detail.last_decision.model }}{% endif %}{% if detail.last_decision.latency_ms is not none %}, {{ detail.last_decision.latency_ms }} мс{% endif %}</span>
+          <span class="muted">{{ label('ai_status', detail.last_decision.status) }}{% if detail.last_decision.model %}, модель {{ detail.last_decision.model }}{% endif %}{% if detail.last_decision.latency_ms %}, {{ detail.last_decision.latency_ms }} мс{% endif %}</span>
         {% endif %}
       </div>
 

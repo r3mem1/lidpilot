@@ -1258,6 +1258,12 @@ def _booking_text(db: Session, booking: Booking, event: str) -> str | None:
         )
     if event == "cancelled":
         return f"Ваша запись {when} ({what}) отменена. Напишите, если хотите выбрать другое время."
+    if event == "rescheduled":
+        address = f" Адрес: {business.address}." if business.address else ""
+        return (
+            f"Ваша запись перенесена: {what}, {when}. Ждём вас!{address} "
+            "Если время не подходит — напишите сюда."
+        )
     return None
 
 

@@ -104,6 +104,7 @@
         $("[data-invite-step=form]", inviteForm).hidden = false;
         $("[data-invite-step=done]", inviteForm).hidden = true;
         $("[data-status]", inviteForm).textContent = "";
+        toggleInviteMaster();
         inviteDialog.showModal();
         inviteForm.elements.email.focus();
       }
@@ -115,18 +116,48 @@
         else { document.execCommand("copy"); done(); }
       }
     });
+    /* Роль «Мастер»: можно выбрать уже заведённого мастера без аккаунта. */
+    var inviteMaster = $("[data-invite-master]", inviteForm);
+    function toggleInviteMaster() {
+      if (inviteMaster) inviteMaster.hidden = inviteForm.elements.role.value !== "MASTER";
+    }
+    inviteForm.elements.role.addEventListener("change", toggleInviteMaster);
     inviteForm.addEventListener("submit", function (event) {
       event.preventDefault();
       var status = $("[data-status]", inviteForm);
       var button = $("[type=submit]", inviteForm);
+      var payload = { email: inviteForm.elements.email.value.trim(), role: inviteForm.elements.role.value };
+      if (inviteMaster && payload.role === "MASTER" && inviteForm.elements.master_id.value) {
+        payload.master_id = parseInt(inviteForm.elements.master_id.value, 10);
+      }
       LP.setBusy(button, true);
-      LP.api("POST", inviteForm.dataset.url, { email: inviteForm.elements.email.value.trim(), role: inviteForm.elements.role.value }).then(function (res) {
+      LP.api("POST", inviteForm.dataset.url, payload).then(function (res) {
         LP.setBusy(button, false);
         if (!res.ok) { status.textContent = LP.errorMessage(res); return; }
         $("[data-invite-link]", inviteForm).value = res.data.invite_url;
         $("[data-invite-step=form]", inviteForm).hidden = true;
         $("[data-invite-step=done]", inviteForm).hidden = false;
       });
+    });
+  }
+
+  /* ---------- Записи: перенос (вне ТЗ, §22) ---------- */
+  var rescheduleDialog = $("#reschedule-dialog");
+  if (rescheduleDialog) {
+    document.addEventListener("click", function (event) {
+      var button = event.target.closest && event.target.closest("[data-reschedule]");
+      if (!button) return;
+      var form = $("form", rescheduleDialog);
+      form.reset();
+      LP.showFieldErrors(form, {});
+      $("[data-status]", form).textContent = "";
+      form.elements.booking_id.value = button.dataset.reschedule;
+      form.elements.day.value = button.dataset.day;
+      form.elements.start_time.value = button.dataset.time;
+      form.elements.master_id.value = button.dataset.master;
+      $("[data-reschedule-what]", rescheduleDialog).textContent = button.dataset.what;
+      rescheduleDialog.showModal();
+      form.elements.day.focus();
     });
   }
 
@@ -160,7 +191,7 @@
         var reasons = {
           HOT_LEAD_CONFIRMATION: "запись подтверждает человек", COMPLAINT: "жалоба клиента", MISSING_DATA: "в данных компании нет ответа",
           AMBIGUOUS_REQUEST: "непонятно, что хочет клиент", ACTION_NOT_ALLOWED: "просьба вне прав ассистента", EXTERNAL_API_ERROR: "сбой AI-сервиса",
-          VALIDATION_FAILED: "ответ модели не прошёл проверку на выдуманные данные", SPAM_SUSPECTED: "похоже на спам", AUTO_REPLY_DISABLED: "автоответы выключены", CLIENT_NOTICE: "клиент предупреждает об опоздании"
+          VALIDATION_FAILED: "ответ модели не прошёл проверку на выдуманные данные", SPAM_SUSPECTED: "похоже на спам", AUTO_REPLY_DISABLED: "автоответы выключены", CLIENT_NOTICE: "клиент предупреждает об опоздании", BOOKING_CHANGE: "клиент просит перенести или отменить запись"
         };
         var intents = { PRICE: "цена", BOOKING: "запись", QUESTION: "вопрос", COMPLAINT: "жалоба", OTHER: "другое", SPAM: "спам" };
         var priorities = { HOT: "горячий", WARM: "тёплый", COLD: "холодный" };

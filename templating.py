@@ -8,7 +8,9 @@ Jinja2-шаблоны кабинета — раздел 9 ТЗ (HTML/CSS/JavaScr
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -54,12 +56,26 @@ def label(group: str, key: object) -> str:
     return LABELS.get(group, {}).get(str(raw), str(raw) if raw is not None else "—")
 
 
+# Причины, сохранённые до 2026-10-01, содержат служебный код шага записи.
+_BOOKING_STEP_CODES = {
+    "HOLD": "поставлена бронь",
+    "OFFER": "предложено свободное время",
+    "ASK_SERVICE": "уточняется услуга",
+    "WINDOWS": "названо свободное время мастеров",
+    "NO_SLOTS": "свободного времени нет",
+}
+_BOOKING_STEP_RE = re.compile(r"(запись по расписанию: )([A-Z_]+)")
+
+
 def clean_reason(value: str | None) -> str:
-    """Причина классификации для человека: без служебного префикса «Правила: »
-    и без хвоста «; LLM: …» (полный текст остаётся в данных лида)."""
+    """Причина классификации для человека: без служебного префикса «Правила: »,
+    без хвоста «; LLM: …» и без кодов шага записи (полный текст — в данных лида)."""
     if not value:
         return ""
     text = value.split("; LLM:")[0].strip()
+    text = _BOOKING_STEP_RE.sub(
+        lambda m: m.group(1) + _BOOKING_STEP_CODES.get(m.group(2), m.group(2)), text
+    )
     if text.startswith("Правила:"):
         text = text[len("Правила:") :].strip()
     return text[:1].upper() + text[1:] if text else ""
@@ -71,6 +87,25 @@ def pretty_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
+_ASSET_VERSIONS: dict[str, str] = {}
+
+
+def asset(path: str) -> str:
+    """/static/<path>?v=<хеш содержимого>: после релиза браузер сразу берёт новые
+    JS/CSS, а не держит старые из кеша (проверка сайта 2026-10-01: новая разметка
+    работала со старым app.js). Хеш считается один раз на процесс."""
+    version = _ASSET_VERSIONS.get(path)
+    if version is None:
+        try:
+            content = (BASE_DIR / "static" / path).read_bytes()
+            version = hashlib.sha256(content).hexdigest()[:10]
+        except OSError:
+            version = "0"
+        _ASSET_VERSIONS[path] = version
+    return f"/static/{path}?v={version}"
+
+
+templates.env.globals["asset"] = asset
 templates.env.filters["pretty_json"] = pretty_json
 templates.env.filters["reason"] = clean_reason
 templates.env.filters["dt"] = format_dt

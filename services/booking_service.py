@@ -501,6 +501,102 @@ def cancel(db: Session, ctx: BusinessContext, booking: Booking) -> Booking:
     )
 
 
+def reschedule(
+    db: Session,
+    ctx: BusinessContext,
+    booking: Booking,
+    *,
+    starts_at: datetime,
+    master_id: int | None = None,
+    now: datetime | None = None,
+) -> Booking:
+    """Перенести активную запись на другое время (и, по желанию, к другому мастеру).
+
+    Проверка сайта 2026-10-01: раньше перенос был «отменить + записать заново» —
+    клиент получал «запись отменена» сразу после «перенесли вас». Теперь одно
+    сообщение «Ваша запись перенесена». Те же проверки, что при создании; запись
+    сама с собой не пересекается. Решение сотрудника — запись подтверждена."""
+    assert_can_view(db, ctx, booking)
+    if not master_service.is_staff(ctx):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия"
+        )
+    if booking.status not in ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Перенести можно только запись, которая ждёт подтверждения или подтверждена",
+        )
+    master = db.get(Master, master_id or booking.master_id)
+    if master is None or master.business_id != ctx.business_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Мастер не найден")
+
+    def conflict(reason: str) -> HTTPException:
+        db.rollback()
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
+
+    old_start, old_master_id = _aware(booking.starts_at), booking.master_id
+    starts_at = _aware(starts_at).astimezone(UTC)
+    ends_at = starts_at + (_aware(booking.ends_at) - old_start)
+    if not master.active:
+        raise conflict("Мастер не принимает записи")
+    if booking.service_id is not None and booking.service_id not in _allowed_service_ids(
+        db, master, ctx.business_id
+    ):
+        raise conflict("Мастер не выполняет эту услугу")
+    if starts_at < (now or utcnow()):
+        raise conflict("Время уже прошло")
+    db.execute(update(Master).where(Master.id == master.id).values(active=Master.active))
+    if not _inside_shift(db, ctx.business, master.id, starts_at, ends_at):
+        raise conflict("Время вне смены мастера")
+    clash = db.scalar(
+        select(Booking.id).where(
+            Booking.id != booking.id,
+            Booking.master_id == master.id,
+            Booking.status.in_(ACTIVE),
+            Booking.starts_at < ends_at,
+            Booking.ends_at > starts_at,
+        )
+    )
+    if clash is not None:
+        raise conflict("Это время уже занято")
+
+    # Прежний мастер узнаёт, что запись ушла к другому (уведомление по старым данным).
+    after = _fire(db, booking, "moved_away") if master.id != old_master_id else []
+    booking.master_id = master.id
+    booking.starts_at = starts_at
+    booking.ends_at = ends_at
+    booking.status = BookingStatus.CONFIRMED
+    booking.decided_by_user_id = ctx.user.id
+    if booking.conversation_id is not None:
+        conversation = db.get(Conversation, booking.conversation_id)
+        if conversation is not None and conversation.attention_reason == "BOOKING_PENDING":
+            conversation.status = ConversationStatus.OPEN
+            conversation.attention_reason = None
+    tz = schedule_service.business_tz(ctx.business)
+    audit_service.log_event(
+        db,
+        event_type=audit_service.EventType.BOOKING_RESCHEDULED,
+        message=(
+            f"Запись #{booking.id} перенесена: {old_start.astimezone(tz):%d.%m %H:%M} → "
+            f"{starts_at.astimezone(tz):%d.%m %H:%M}, мастер «{master.display_name}»"
+        ),
+        business_id=ctx.business_id,
+        actor_user_id=ctx.user.id,
+        payload={
+            "booking_id": booking.id,
+            "from": old_start.isoformat(),
+            "to": starts_at.isoformat(),
+            "from_master_id": old_master_id,
+            "to_master_id": master.id,
+        },
+    )
+    after += _fire(db, booking, "rescheduled")
+    db.commit()
+    _run_after_commit(after)
+    db.refresh(booking)
+    return booking
+
+
 def create_by_staff(
     db: Session,
     ctx: BusinessContext,

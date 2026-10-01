@@ -16,6 +16,7 @@
     POST   /businesses/{business_id}/booking-requests/{id}/close   владелец, менеджер
     POST   /bookings/{booking_id}/confirm | /reject       владелец, менеджер, мастер (свои)
     POST   /bookings/{booking_id}/cancel                  владелец, менеджер
+    POST   /bookings/{booking_id}/reschedule              владелец, менеджер (перенос)
     GET    /businesses/{business_id}/availability         владелец, менеджер
     POST   /masters/{master_id}/notify-link               сам мастер или владелец
     DELETE /masters/{master_id}/notify-link               сам мастер или владелец
@@ -36,6 +37,7 @@ from models import Booking, BookingStatus, Master, MasterShift, MemberRole, Serv
 from schemas import (
     BookingCreate,
     BookingOut,
+    BookingReschedule,
     MasterCreate,
     MasterOut,
     MasterServicesUpdate,
@@ -300,6 +302,20 @@ def cancel_booking(
 ):
     booking, ctx = resolved
     return booking_service.cancel(db, ctx, booking)
+
+
+@router.post("/bookings/{booking_id}/reschedule", response_model=BookingOut)
+def reschedule_booking(
+    payload: BookingReschedule,
+    resolved: tuple[Booking, BusinessContext] = Depends(require_booking_access(*STAFF)),
+    db: Session = Depends(get_db),
+):
+    """Перенос записи (вне ТЗ, §22): клиент получает одно сообщение «перенесена»."""
+    booking, ctx = resolved
+    starts_at = schedule_service.local_to_utc(ctx.business, payload.day, payload.start_time)
+    return booking_service.reschedule(
+        db, ctx, booking, starts_at=starts_at, master_id=payload.master_id
+    )
 
 
 @router.get("/businesses/{business_id}/availability", response_model=list[SlotOut])

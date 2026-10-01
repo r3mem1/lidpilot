@@ -161,7 +161,7 @@
     <div class="sheet-body">
       {% if subscription %}
         <p>Текущий тариф: <strong>{{ label('plan', subscription.plan) }}</strong>,
-          {% if subscription.expires_at %}{{ 'действовал' if not subscription.active else 'действует' }} до {{ subscription.expires_at|dt }}{% else %}без ограничения срока{% endif %}.</p>
+          {% if subscription.expires_at %}{{ 'действовал' if not subscription.active else 'действует' }} до <time datetime="{{ subscription.expires_at|iso }}" data-local>{{ subscription.expires_at|dt }}</time>{% else %}без ограничения срока{% endif %}.</p>
       {% endif %}
       <p class="muted">{% for plan, price in plans %}{{ label('plan', plan) }} — {{ price }} ₽ в месяц{{ '; ' if not loop.last else '.' }}{% endfor %}
         Оплата по счёту: {{ billing_contact or 'напишите в поддержку LeadPilot' }}. После оплаты срок продлевается вручную.</p>

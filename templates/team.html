@@ -1,6 +1,6 @@
 {% extends "cabinet_base.html" %}
 {% import "_macros.html" as m %}
-{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block scripts %}<script src="{{ asset('js/pages.js') }}" defer></script>{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
@@ -127,6 +127,17 @@
           <option value="OWNER">Владелец</option>
         </select>
       </div>
+      {% set unlinked = masters | selectattr('user_id', 'none') | list %}
+      {% if unlinked %}
+      <div class="field" data-invite-master hidden>
+        <label for="inv-master">Кто это из мастеров</label>
+        <select class="select" id="inv-master" name="master_id">
+          <option value="">Новый мастер</option>
+          {% for master in unlinked %}<option value="{{ master.id }}">{{ master.display_name }}</option>{% endfor %}
+        </select>
+        <span class="hint">Выберите мастера из списка — его расписание и записи перейдут в аккаунт сотрудника.</span>
+      </div>
+      {% endif %}
       <div class="form-actions">
         <button class="btn btn--primary" type="submit">Создать ссылку</button>
         <button class="btn" type="button" data-dialog-close>Отмена</button>

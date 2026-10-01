@@ -968,6 +968,21 @@ check(
     and "проверит" in res.safe_reply,
     str(res.safe_reply),
 )
+# Проверка сайта 2026-10-01: запись без слова «запись» (правила, без модели).
+res = AIPipeline().process("давайте завтра в 12 на стрижку", KNOW_T)
+check(
+    "«давайте завтра в 12 на стрижку» → запись, а не «точной информации нет»",
+    res.classification.intent.value == "BOOKING"
+    and res.safe_reply is not None
+    and "«Стрижка»" in res.safe_reply,
+    str(res.safe_reply),
+)
+res = AIPipeline().process("сколько стоит стрижка?", KNOW_T)
+check(
+    "вопрос о цене услуги не превращается в запись",
+    res.classification.intent.value != "BOOKING",
+    res.classification.intent.value,
+)
 first = AIPipeline().process("Хочу записаться", KNOW_T)
 dialog = [
     HistoryTurn(role=HistoryRole.CUSTOMER, text="Хочу записаться"),

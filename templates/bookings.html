@@ -1,10 +1,10 @@
 {% extends "cabinet_base.html" %}
-{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block scripts %}<script src="{{ asset('js/pages.js') }}" defer></script>{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
     <h1>{{ title }}</h1>
-    <p>{% if is_staff %}Записи клиентов к мастерам. Брони ассистента ждут подтверждения — клиент получит сообщение, как только вы подтвердите или отклоните.{% else %}Клиенты, записанные к вам. Бронь от ассистента можно подтвердить или отклонить.{% endif %}</p>
+    <p>{% if is_staff %}Записи клиентов к мастерам. Клиент получает «Готово, вы записаны» сразу, как только ассистент ставит бронь; вам остаётся её подтвердить. Клиенту напишем, только если вы отклоните, отмените или перенесёте запись.{% else %}Клиенты, записанные к вам. Бронь от ассистента можно подтвердить или отклонить.{% endif %}</p>
   </div>
   <form class="actions" method="get" action="/cabinet/{{ business_id }}/bookings">
     <label class="visually-hidden" for="bf-from">С</label>
@@ -94,6 +94,7 @@
                     <button class="btn btn--small" type="button" data-api-click data-url="/bookings/{{ b.id }}/reject" data-confirm="Отклонить бронь {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение, диалог перейдёт в «Требует внимания»." data-confirm-ok="Отклонить" data-success="reload">Отклонить</button>
                   {% endif %}
                   {% if is_staff and b.status.value in ('PENDING', 'CONFIRMED') %}
+                    <button class="btn btn--small" type="button" data-reschedule="{{ b.id }}" data-day="{{ it.local.strftime('%Y-%m-%d') }}" data-time="{{ it.local.strftime('%H:%M') }}" data-master="{{ b.master_id }}" data-what="{{ it.service }}, {{ b.client_name }}">Перенести</button>
                     <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/bookings/{{ b.id }}/cancel" data-confirm="Отменить запись {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение." data-confirm-ok="Отменить запись" data-success="reload">Отменить</button>
                   {% endif %}
                 </div>
@@ -182,5 +183,35 @@
       </form>
     </section>
   </div>
+
+  <dialog class="dialog" id="reschedule-dialog" aria-labelledby="reschedule-title">
+    <form data-api-form data-method="POST" data-url="/bookings/{booking_id}/reschedule" data-success="reload" novalidate>
+      <h2 id="reschedule-title">Перенести запись</h2>
+      <p class="muted" data-reschedule-what></p>
+      <input type="hidden" name="booking_id">
+      <div class="form-row">
+        <div class="field">
+          <label for="rs-day">Дата</label>
+          <input class="input" id="rs-day" name="day" type="date" required>
+        </div>
+        <div class="field">
+          <label for="rs-time">Время</label>
+          <input class="input" id="rs-time" name="start_time" type="time" step="300" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="rs-master">Мастер</label>
+        <select class="select" id="rs-master" name="master_id" data-type="int">
+          {% for m in masters if m.active %}<option value="{{ m.id }}">{{ m.display_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <p class="hint">Клиент получит одно сообщение: «Ваша запись перенесена» с новым временем.</p>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Перенести</button>
+        <button class="btn" type="button" data-dialog-close>Отмена</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+    </form>
+  </dialog>
 {% endif %}
 {% endblock %}
