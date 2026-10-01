@@ -21,3 +21,8 @@ e2e-shots/
 
 # Промо-видео /brag (генерируемые файлы, кадры, venv с ffmpeg)
 brag-output*/
+
+# Стенд ручной проверки сайта (scripts/qa_stand.py)
+.qa/
+.playwright-mcp/
+qa_site.db
