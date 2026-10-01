@@ -33,6 +33,7 @@ from database import SessionLocal
 from integrations.base import ChannelError, IncomingMessage
 from models import (
     Booking,
+    BookingSource,
     Business,
     Channel,
     Integration,
@@ -301,6 +302,10 @@ _TITLES = {
 
 
 def _booking_notice(db: Session, booking: Booking, event: str) -> Callable[[], None] | None:
+    # Решение заказчика 2026-09-29: при автозаписи ассистентом подтверждение ничего
+    # не повторяет — клиент уже получил «Готово, вы записаны», мастер — «Новая бронь».
+    if event == "confirmed" and booking.source is BookingSource.AI:
+        return None
     title = _TITLES.get(event)
     master = db.get(Master, booking.master_id)
     if title is None or master is None:

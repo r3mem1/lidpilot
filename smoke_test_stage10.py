@@ -1314,9 +1314,11 @@ with TestClient(app) as c:
     hold_601 = bookings_of(601)[0]["id"]
     before = len(fake.sent(901))
     c.post(f"/bookings/{hold_601}/confirm", headers=H["manager_a"])
+    before_client = len(fake.sent(601))
     check(
-        "подтверждение → уведомление мастеру",
-        "Запись подтверждена" in fake.sent(901)[-1]["text"] and len(fake.sent(901)) == before + 1,
+        "подтверждение брони ассистента → повторных сообщений нет ни мастеру, ни клиенту",
+        len(fake.sent(901)) == before and len(fake.sent(601)) == before_client,
+        f"мастер: {fake.sent(901)[before:]} клиент: {fake.sent(601)[before_client:]}",
     )
 
     # Сбой Telegram при уведомлении: сохранено PENDING, потом повтор.
