@@ -69,7 +69,7 @@ python smoke_test_stage6.py            # 134 проверки этапа 6
 python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
 python smoke_test_stage8.py            # 43 проверки этапа 8 (подписка, onboarding + шаг «запись к мастерам»)
 python smoke_test_stage9.py            # 71 проверка этапа 9 (VK, rate limit в БД)
-python smoke_test_stage10.py           # 139 проверок: мастера, расписание, записи, AI-запись, заявки без брони, проверка ответа, уведомления
+python smoke_test_stage10.py           # 147 проверок: мастера, расписание, записи, AI-запись (окна — интервалами мастеров, части дня), заявки без брони, проверка ответа, уведомления
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)

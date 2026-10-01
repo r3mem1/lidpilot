@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
@@ -148,6 +148,99 @@ def free_slots(
             cursor += step
     slots.sort(key=lambda slot: (slot.starts_at, slot.master_name))
     return slots[:limit] if limit else slots
+
+
+@dataclass(frozen=True)
+class MasterWindows:
+    master_id: int
+    master_name: str
+    windows: list[tuple[datetime, datetime]]  # свободные интервалы, время компании
+
+
+def free_windows(
+    db: Session,
+    business: Business,
+    day: date,
+    *,
+    service: Service | None = None,
+    master_id: int | None = None,
+    time_from: time | None = None,
+    time_to: time | None = None,
+    now: datetime | None = None,
+) -> list[MasterWindows]:
+    """Свободные интервалы мастеров за день: смены минус активные записи и время
+    раньше «через час» (решение заказчика 2026-10-01: на «какие окна на завтра» —
+    «Иван 10:00–16:00, Пётр 13:00–20:00»). Интервал короче услуги не показывается
+    (услуга не названа — короче самой короткой услуги компании). time_from/time_to —
+    часть дня («вечером»): интервалы обрезаются по этим границам."""
+    tz = schedule_service.business_tz(business)
+    if service is not None:
+        masters = master_service.masters_for_service(db, business.id, service.id)
+        min_len = timedelta(minutes=duration_minutes(service))
+    else:
+        masters = list(
+            db.scalars(
+                select(Master)
+                .where(Master.business_id == business.id, Master.active.is_(True))
+                .order_by(Master.display_name, Master.id)
+            )
+        )
+        durations = db.scalars(
+            select(Service.duration).where(
+                Service.business_id == business.id, Service.active.is_(True)
+            )
+        ).all()
+        min_len = timedelta(
+            minutes=min((d for d in durations if d), default=DEFAULT_DURATION_MINUTES)
+        )
+    if master_id is not None:
+        masters = [m for m in masters if m.id == master_id]
+    if not masters:
+        return []
+    shifts = db.scalars(
+        select(MasterShift)
+        .where(MasterShift.master_id.in_([m.id for m in masters]), MasterShift.day == day)
+        .order_by(MasterShift.start_time)
+    ).all()
+    if not shifts:
+        return []
+    day_start = datetime.combine(day, datetime.min.time(), tzinfo=tz)
+    busy = _active_bookings(
+        db,
+        [m.id for m in masters],
+        day_start.astimezone(UTC),
+        (day_start + timedelta(days=1)).astimezone(UTC),
+    )
+    # «Не раньше чем через час», с округлением вверх до шага сетки компании.
+    step = max(5, business.slot_step_minutes or 30)
+    earliest = ((now or utcnow()) + timedelta(minutes=MIN_LEAD_MINUTES)).astimezone(tz)
+    over = (earliest.hour * 60 + earliest.minute) % step
+    if over or earliest.second or earliest.microsecond:
+        earliest += timedelta(minutes=step - over)
+    earliest = earliest.replace(second=0, microsecond=0)
+    if time_from is not None:
+        earliest = max(earliest, datetime.combine(day, time_from, tzinfo=tz))
+    latest = datetime.combine(day, time_to, tzinfo=tz) if time_to is not None else None
+
+    result: list[MasterWindows] = []
+    for master in masters:
+        windows: list[tuple[datetime, datetime]] = []
+        taken = sorted((s.astimezone(tz), e.astimezone(tz)) for s, e in busy[master.id])
+        for shift in (s for s in shifts if s.master_id == master.id):
+            cursor = max(datetime.combine(day, shift.start_time, tzinfo=tz), earliest)
+            shift_end = datetime.combine(day, shift.end_time, tzinfo=tz)
+            if latest is not None:
+                shift_end = min(shift_end, latest)
+            for b_start, b_end in [*taken, (shift_end, shift_end)]:
+                end = min(b_start, shift_end)
+                if end - cursor >= min_len:
+                    windows.append((cursor, end))
+                cursor = max(cursor, b_end)
+                if cursor >= shift_end:
+                    break
+        if windows:
+            result.append(MasterWindows(master.id, master.display_name, windows))
+    return result
 
 
 def _inside_shift(

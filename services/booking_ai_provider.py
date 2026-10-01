@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ai.booking import BookableService, BookingKind, SlotOption
+from ai.booking import BookableService, BookingKind, BookingRequest, MasterWindows, SlotOption
 from models import AiResponse, Booking, BookingSource, Business, Master, Message, Service
 from services import booking_service, master_service, schedule_service
 
@@ -93,6 +93,35 @@ class DbScheduleProvider:
             for s in slots
         ]
 
+    def free_windows(
+        self,
+        day: date,
+        service_id: int | None = None,
+        master_id: int | None = None,
+        time_from: time | None = None,
+        time_to: time | None = None,
+    ) -> list[MasterWindows]:
+        service = self._db.get(Service, service_id) if service_id else None
+        if service is not None and service.business_id != self._business_id:
+            return []
+        rows = booking_service.free_windows(
+            self._db,
+            self._business(),
+            day,
+            service=service,
+            master_id=master_id,
+            time_from=time_from,
+            time_to=time_to,
+        )
+        return [
+            MasterWindows(
+                master_id=r.master_id,
+                master_name=r.master_name,
+                windows=tuple((s.time(), e.time()) for s, e in r.windows),
+            )
+            for r in rows
+        ]
+
     def hold(self, service_id: int, master_id: int, starts_at: datetime) -> int | None:
         master = self._db.get(Master, master_id)
         service = self._db.get(Service, service_id)
@@ -161,6 +190,36 @@ class DbScheduleProvider:
         return bool(booking) and booking.get("kind") in (
             BookingKind.OFFER.value,
             BookingKind.ASK_SERVICE.value,
+            BookingKind.WINDOWS.value,
+        )
+
+    def last_context(self) -> tuple[BookingKind, BookingRequest] | None:
+        """Сказанное клиентом до списка окон / вопроса об услуге. Каждое поле
+        перепроверяется по текущим данным компании; прошедший день отбрасывается."""
+        booking = self._last_booking_details()
+        if not booking or booking.get("kind") not in (
+            BookingKind.WINDOWS.value,
+            BookingKind.ASK_SERVICE.value,
+        ):
+            return None
+        ctx = booking.get("context")
+        if not isinstance(ctx, dict):
+            return None
+        service_id = ctx.get("service_id")
+        master_id = ctx.get("master_id")
+        day = at = None
+        try:
+            day = date.fromisoformat(ctx["day"]) if ctx.get("day") else None
+            at = time.fromisoformat(ctx["at"]) if ctx.get("at") else None
+        except (TypeError, ValueError):
+            day = at = None
+        part = ctx.get("part_of_day")
+        return BookingKind(booking["kind"]), BookingRequest(
+            service_id=service_id if service_id in {s.id for s in self.services()} else None,
+            master_id=master_id if master_id in dict(self.masters()) else None,
+            day=day if day and day >= self.today else None,
+            at=at,
+            part_of_day=part if part in ("morning", "day", "evening") else None,
         )
 
     def last_offer(self) -> tuple[int | None, list[SlotOption]]:

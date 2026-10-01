@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import enum
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from typing import Protocol
 
@@ -43,6 +43,15 @@ class SlotOption:
 
 
 @dataclass(frozen=True)
+class MasterWindows:
+    """Свободные интервалы мастера за день (время компании, из смен и записей в БД)."""
+
+    master_id: int
+    master_name: str
+    windows: tuple[tuple[time, time], ...]
+
+
+@dataclass(frozen=True)
 class BookableService:
     id: int
     name: str
@@ -61,6 +70,18 @@ class ScheduleProvider(Protocol):
         self, service_id: int, day_from: date, day_to: date, master_id: int | None = None
     ) -> list[SlotOption]: ...
 
+    def free_windows(
+        self,
+        day: date,
+        service_id: int | None = None,
+        master_id: int | None = None,
+        time_from: time | None = None,
+        time_to: time | None = None,
+    ) -> list[MasterWindows]:
+        """Свободные интервалы мастеров за день («Иван 10:00–16:00»), при
+        time_from/time_to — только внутри этих границ («вечером»)."""
+        ...
+
     def hold(self, service_id: int, master_id: int, starts_at: datetime) -> int | None:
         """Поставить бронь; id брони или None, если время уже занято."""
         ...
@@ -77,6 +98,11 @@ class ScheduleProvider(Protocol):
         """Последний ответ AI в диалоге — предложение окон или вопрос об услуге."""
         ...
 
+    def last_context(self) -> tuple[BookingKind, BookingRequest] | None:
+        """Что клиент уже назвал (услуга, мастер, день, время), если последний ответ
+        AI — список интервалов или вопрос об услуге; иначе None."""
+        ...
+
 
 # --------------------------------------------------------------------------- #
 # Итог
@@ -85,6 +111,7 @@ class BookingKind(str, enum.Enum):
     HOLD = "HOLD"  # бронь поставлена, ждёт подтверждения человеком
     OFFER = "OFFER"  # предложены свободные окна
     ASK_SERVICE = "ASK_SERVICE"  # уточняем услугу
+    WINDOWS = "WINDOWS"  # названы свободные интервалы мастеров на день
     NO_SLOTS = "NO_SLOTS"  # свободного времени нет — нужен менеджер
 
 
@@ -97,10 +124,24 @@ class BookingOutcome:
     booking_id: int | None = None
     held: SlotOption | None = None
     source: str = "RULES"  # RULES | LLM — чем разобрано сообщение
+    # WINDOWS / ASK_SERVICE: что клиент уже назвал — следующее сообщение дополняет это,
+    # а не начинает запись заново («в 14 к Петру» после списка окон, «на бороду»
+    # после вопроса об услуге).
+    context: BookingRequest | None = None
 
     def as_dict(self) -> dict:
+        ctx = self.context
         return {
             "kind": self.kind.value,
+            "context": {
+                "service_id": ctx.service_id,
+                "master_id": ctx.master_id,
+                "day": ctx.day.isoformat() if ctx.day else None,
+                "at": ctx.at.strftime("%H:%M") if ctx.at else None,
+                "part_of_day": ctx.part_of_day,
+            }
+            if ctx
+            else None,
             "service_id": self.service_id,
             "booking_id": self.booking_id,
             "source": self.source,
@@ -207,6 +248,19 @@ _ANY_MASTER_RE = re.compile(
     r"|на\s+ваше\s+усмотрение|\bлюб(?:ой|ому|ого)\s+мастер|^\s*(?:к\s+)?любо(?:му|й)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
+
+
+# Вопрос о свободном времени без конкретного часа: «какие окна на завтра»,
+# «есть свободное время в субботу», «когда можно прийти» — ответ интервалами мастеров.
+_WINDOWS_RE = re.compile(
+    r"\bок(?:н[оаеу]|он|ошк)|свободн|когда\s+можно|во\s+сколько\s+можно"
+    r"|как(?:ое|ие)\s+время|есть\s+(?:ли\s+)?(?:время|мест)|расписани",
+    re.IGNORECASE,
+)
+
+
+def is_windows_question(text: str) -> bool:
+    return bool(_WINDOWS_RE.search(text))
 
 
 def _stem(word: str, size: int = 5) -> str:
@@ -433,6 +487,14 @@ def _from_llm(
 # --------------------------------------------------------------------------- #
 # Движок
 # --------------------------------------------------------------------------- #
+# Границы части дня для списка интервалов — те же, что в _part_ok.
+_PART_BOUNDS: dict[str, tuple[time | None, time | None]] = {
+    "morning": (None, time(12, 0)),
+    "day": (time(12, 0), time(17, 0)),
+    "evening": (time(17, 0), None),
+}
+
+
 def _part_ok(slot: SlotOption, part: str | None) -> bool:
     hour = slot.local_start.hour
     return part is None or (
@@ -534,6 +596,41 @@ class BookingEngine:
         services = provider.services()
         names = {s.id: s.name for s in services}
         offer_service, offered = provider.last_offer()
+        last = provider.last_context()
+        said = request  # только то, что в этом сообщении
+
+        # Решение заказчика 2026-10-01: сказанное раньше (после списка окон или
+        # вопроса об услуге) не теряется — новое сообщение лишь дополняет его.
+        if last is not None:
+            _, ctx = last
+            request = replace(
+                request,
+                service_id=request.service_id or ctx.service_id,
+                master_id=request.master_id or ctx.master_id,
+                day=request.day or ctx.day,
+                at=request.at or ctx.at,
+                part_of_day=request.part_of_day or ctx.part_of_day,
+            )
+
+        # «Какие окна на завтра?» — свободные интервалы каждого мастера на день,
+        # услугу при этом не спрашиваем. После списка окон уточнение без часа
+        # («а вечером?», «а в пятницу?», «а у Петра?») — снова список.
+        refine = (
+            last is not None
+            and last[0] is BookingKind.WINDOWS
+            and said.service_id is None
+            and bool(said.day or said.part_of_day or said.master_id)
+        )
+        if (
+            said.at is None
+            and said.choice is None
+            and not said.agree
+            and (is_windows_question(text) or refine)
+        ):
+            # Новый вопрос о днях не наследует время из прошлых сообщений.
+            request = replace(request, at=None)
+            service = request.service_id if request.service_id in names else None
+            return self._windows(provider, request, service, names.get(service or 0), source)
 
         service_id = request.service_id or offer_service
         if service_id is None and len(services) == 1:
@@ -545,6 +642,7 @@ class BookingEngine:
                 + ", ".join(s.name for s in services)
                 + ".",
                 source=source,
+                context=replace(request, service_id=None, choice=None, agree=False),
             )
         service_name = names[service_id]
         today = provider.today
@@ -622,6 +720,66 @@ class BookingEngine:
             )
         return self._offer(
             service_id, service_name, _pick_times(slots), today, source, prefix, master_name
+        )
+
+    @staticmethod
+    def _windows(
+        provider: ScheduleProvider,
+        request: BookingRequest,
+        service_id: int | None,
+        service_name: str | None,
+        source: str,
+    ) -> BookingOutcome:
+        """Свободные интервалы мастеров: на названный день, иначе на ближайший день,
+        где они есть. Всё время в ответе — из смен и записей в БД (инвариант 2).
+        Окон нет на две недели вперёд — NO_SLOTS (менеджеру)."""
+        today = provider.today
+        wanted = request.day or today
+        part = request.part_of_day
+        time_from, time_to = _PART_BOUNDS.get(part or "", (None, None))
+        found: tuple[date, list[MasterWindows]] | None = None
+        for i in range(HORIZON_DAYS):
+            day = wanted + timedelta(days=i)
+            rows = provider.free_windows(day, service_id, request.master_id, time_from, time_to)
+            if rows:
+                found = (day, rows)
+                break
+        if found is None:
+            return BookingOutcome(
+                kind=BookingKind.NO_SLOTS, reply=None, service_id=service_id, source=source
+            )
+        day, rows = found
+        when = f" {_PART_WORDS[part]}" if part else ""
+        if day == wanted:
+            header = f"Свободное время {_day_phrase(day, today)}{',' + when if when else ''}"
+        else:
+            header = (
+                f"{_capitalize(_day_phrase(wanted, today).split(',')[0])}{when} "
+                f"свободного времени нет. "
+                f"Ближайшее свободное{when} — {_day_phrase(day, today)}"
+            )
+        if service_name:
+            header += f" (на «{service_name}»)"
+        lines = [
+            f"{row.master_name} — " + ", ".join(f"{a:%H:%M}–{b:%H:%M}" for a, b in row.windows)
+            for row in rows
+        ]
+        tail = (
+            "Напишите удобное время и мастера — запишу."
+            if service_name
+            else "Напишите удобное время, мастера и услугу — запишу."
+        )
+        return BookingOutcome(
+            kind=BookingKind.WINDOWS,
+            reply=f"{header}:\n" + "\n".join(lines) + f"\n{tail}",
+            service_id=service_id,
+            source=source,
+            context=BookingRequest(
+                service_id=service_id,
+                master_id=request.master_id,
+                day=day,
+                part_of_day=part,
+            ),
         )
 
     @staticmethod

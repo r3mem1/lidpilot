@@ -911,15 +911,119 @@ with TestClient(app) as c:
     )
 
     # Живая фраза клиента: вопрос о свободном времени — AI сам называет окна из БД.
+    # Решение заказчика 2026-10-01: ответ — интервалы каждого мастера («Иван — 10:00–16:00»).
     reply = say(511, "хочу на стрижку записаться на какое время свободно послезавтра?")
-    times_511 = re.findall(r"\d{2}:\d{2}", reply)
+    starts_511 = {
+        s["local_start"][11:16]
+        for s in c.get(
+            f"/businesses/{biz_a}/availability",
+            headers=H["manager_a"],
+            params={"service_id": cut, "date_from": iso(D1), "date_to": iso(D1)},
+        ).json()
+    }
+    windows_511 = re.findall(r"(\d{2}:\d{2})–(\d{2}:\d{2})", reply)
     check(
-        "«на какое время свободно послезавтра?» → свободные окна на этот день, без брони",
-        "Свободное время на «Стрижка»" in reply
-        and bool(times_511)
-        and set(times_511) <= free_times
+        "«на какое время свободно послезавтра?» → интервалы мастеров на этот день, без брони",
+        "Свободное время послезавтра" in reply
+        and "«Стрижка»" in reply
+        and "Иван — " in reply
+        and "Пётр" not in reply  # Пётр не делает стрижку
+        and bool(windows_511)
         and not bookings_of(511),
         reply,
+    )
+    check(
+        "каждый интервал — реальное свободное время из БД (начало и последний час — свободны)",
+        all(
+            a in starts_511
+            and (datetime.strptime(b, "%H:%M") - timedelta(hours=1)).strftime("%H:%M") in starts_511
+            for a, b in windows_511
+        ),
+        f"{windows_511} vs {sorted(starts_511)}",
+    )
+
+    # «Какие окна на …» без услуги: все мастера, свободное время = смена минус записи.
+    D4 = TODAY + timedelta(days=5)
+    d4 = D4.strftime("%d.%m")
+    for m, start, end in ((ivan, "10:00", "16:00"), (petr, "13:00", "20:00")):
+        c.post(
+            f"/masters/{m}/shifts",
+            headers=H["owner_a"],
+            json={"day": iso(D4), "start_time": start, "end_time": end},
+        )
+    c.post(
+        f"/businesses/{biz_a}/bookings",
+        headers=H["manager_a"],
+        json={
+            "master_id": ivan,
+            "service_id": cut,
+            "day": iso(D4),
+            "start_time": "12:00",
+            "client_name": "Клиент в обед",
+        },
+    )
+    reply = say(512, f"какие окна есть {d4}?")
+    check(
+        "«какие окна есть <дата>?» → «Иван — 10:00–12:00, 13:00–16:00», «Пётр — 13:00–20:00»",
+        d4 in reply
+        and "Иван — 10:00–12:00, 13:00–16:00" in reply
+        and "Пётр — 13:00–20:00" in reply
+        and "На какую услугу" not in reply
+        and not bookings_of(512),
+        reply,
+    )
+    reply = say(512, "давайте в 14 к Петру на бороду")
+    b512 = bookings_of(512)
+    check(
+        "время после списка интервалов → бронь в тот же день",
+        len(b512) == 1
+        and b512[0]["master_id"] == petr
+        and datetime.fromisoformat(b512[0]["starts_at"]).replace(tzinfo=UTC).astimezone(MSK)
+        == datetime.combine(D4, time(14, 0), tzinfo=MSK)
+        and "вы записаны" in reply,
+        f"{[dict(b) for b in b512]} {reply}",
+    )
+    reply = say(513, "какие окна на завтра?")
+    check(
+        "на завтра смен нет → «Завтра свободного времени нет», ближайший день с интервалами",
+        "Завтра свободного времени нет" in reply
+        and "Ближайшее свободное — послезавтра" in reply
+        and "Иван — " in reply,
+        reply,
+    )
+
+    # Часть дня: интервалы обрезаются по «утром / днём / вечером».
+    # D4: Иван 10–16 (12:00 занято), Пётр 13–20 (14:00–14:30 — борода клиента 512).
+    reply = say(514, f"какие окна {d4} вечером?")
+    check(
+        "«окна вечером» → только вечерние интервалы (Пётр 17:00–20:00, Ивана нет)",
+        "вечером" in reply and "Пётр — 17:00–20:00" in reply and "Иван" not in reply,
+        reply,
+    )
+    reply = say(514, "а утром?")
+    check(
+        "уточнение «а утром?» после списка → тот же день, утренние интервалы",
+        d4 in reply
+        and "утром" in reply
+        and "Иван — 10:00–12:00" in reply
+        and "Пётр" not in reply
+        and not bookings_of(514),
+        reply,
+    )
+
+    # Сказанное до вопроса об услуге не теряется (только правила, без LLM).
+    reply = say(515, f"запишите меня {d4} в 15:00 к Ивану")
+    check("услуга не названа → вопрос об услуге", "На какую услугу" in reply, reply)
+    reply = say(515, "на стрижку")
+    b515 = bookings_of(515)
+    check(
+        "ответ «на стрижку» → бронь на названные раньше день, время и мастера",
+        len(b515) == 1
+        and b515[0]["master_id"] == ivan
+        and datetime.fromisoformat(b515[0]["starts_at"]).replace(tzinfo=UTC).astimezone(MSK)
+        == datetime.combine(D4, time(15, 0), tzinfo=MSK)
+        and "вы записаны" in reply,
+        f"{[dict(b) for b in b515]} {reply}",
     )
 
     reply = say(504, "Ужасно подстригли в прошлый раз, запишите на исправление")
@@ -1147,7 +1251,7 @@ with TestClient(app) as c:
     ).json()
     check(
         "проверка ответа: реальные окна из расписания",
-        pv["booking"] == "OFFER" and "Свободное время" in (pv["client_reply"] or ""),
+        pv["booking"] == "WINDOWS" and "Свободное время" in (pv["client_reply"] or ""),
         str(pv.get("client_reply")),
     )
 
