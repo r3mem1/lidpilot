@@ -83,7 +83,7 @@
               {% if is_staff %}<td>{{ it.master }}</td>{% endif %}
               <td>
                 <span class="cell-title">{{ it.service }}</span>
-                <div class="cell-sub">{{ b.client_name }}{% if it.phone %} · <a href="tel:{{ it.phone }}">{{ format_phone(it.phone) }}</a>{% endif %}{% if b.source.value == 'AI' %} · бронь ассистента{% endif %}{% if is_staff and b.conversation_id %} · <a href="/cabinet/{{ business_id }}/messages?c={{ b.conversation_id }}">диалог</a>{% endif %}</div>
+                <div class="cell-sub">{{ b.client_name }}{% if it.phone %} · <a href="tel:{{ it.phone }}">{{ format_phone(it.phone) }}</a>{% endif %}{% if b.source.value == 'AI' %} · бронь ассистента{% endif %}{% if b.client_confirmed_at %} · <span class="tag tag--ok">клиент подтвердил визит</span>{% endif %}{% if is_staff and b.conversation_id %} · <a href="/cabinet/{{ business_id }}/messages?c={{ b.conversation_id }}">диалог</a>{% endif %}</div>
                 {% if b.comment %}<div class="cell-sub">{{ b.comment }}</div>{% endif %}
               </td>
               <td><span class="tag{% if b.status.value == 'PENDING' %} tag--warm{% elif b.status.value == 'CONFIRMED' %} tag--ok{% endif %}">{{ label('booking_status', b.status) }}</span></td>

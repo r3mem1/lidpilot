@@ -602,6 +602,9 @@ class Message(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # "text" | "attachment": вложения AI не видит, такое сообщение решает человек.
     content_type: Mapped[str] = mapped_column(String(20), nullable=False, default="text")
+    # Кнопки-ответы исходящего сообщения (решение 2026-10-02: «Приду» / «Перенести
+    # запись» в напоминаниях) — хранятся, чтобы повтор отправки ушёл с ними же.
+    buttons: Mapped[list | None] = mapped_column(JSONType)
     intent: Mapped[str | None] = mapped_column(String(32))
     # Кто из сотрудников написал ответ (sender_type = MANAGER), раздел 16: аудит.
     author_user_id: Mapped[int | None] = mapped_column(
@@ -841,6 +844,8 @@ class Booking(Base):
     # Напоминания клиенту (решение 2026-10-01): когда отправлены; перенос сбрасывает.
     reminded_day_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reminded_soon_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Клиент нажал «Приду» в напоминании (решение 2026-10-02) — видно администратору.
+    client_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )

@@ -160,15 +160,24 @@ class TelegramClient:
     def delete_webhook(self) -> None:
         self._call("deleteWebhook", {})
 
-    def send_message(self, chat_id: str, text: str) -> str:
+    def send_message(self, chat_id: str, text: str, buttons: list[str] | None = None) -> str:
         """Отправить текст без parse_mode (клиентский и AI-текст не должны
-        интерпретироваться как разметка). Длинный текст режется на части."""
+        интерпретироваться как разметка). Длинный текст режется на части.
+        buttons — клавиатура-ответ под последним фрагментом: нажатие отправляет
+        текст кнопки обычным сообщением, после нажатия клавиатура скрывается."""
         chunks = split_text(text)
         if not chunks:
             raise ChannelSendError("Пустой текст сообщения")
         last_id = ""
-        for chunk in chunks:
-            result = self._call("sendMessage", {"chat_id": chat_id, "text": chunk})
+        for i, chunk in enumerate(chunks):
+            payload: dict[str, Any] = {"chat_id": chat_id, "text": chunk}
+            if buttons and i == len(chunks) - 1:
+                payload["reply_markup"] = {
+                    "keyboard": [[{"text": b} for b in buttons]],
+                    "one_time_keyboard": True,
+                    "resize_keyboard": True,
+                }
+            result = self._call("sendMessage", payload)
             last_id = str(result.get("message_id", ""))
         return last_id
 

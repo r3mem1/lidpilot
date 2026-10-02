@@ -458,7 +458,7 @@ with TestClient(app) as c:
     r = c.post(
         f"/businesses/{biz_a}/shifts/copy-week",
         headers=H["owner_a"],
-        json={"week": iso(F1 + timedelta(days=1)), "weeks": 1},
+        json={"week": iso(F1 + timedelta(days=7 - F1.weekday())), "weeks": 1},  # пн после периода
     )
     check("копировать пустую неделю — 0 смен", r.json() == {"created": 0, "skipped": 0}, r.text)
     week_of_f0 = F0 - timedelta(days=F0.weekday())
@@ -1362,6 +1362,38 @@ with TestClient(app) as c:
     check(
         "повторный проход — без дубля",
         remind(start517 - timedelta(hours=22)) == 0 and len(fake.sent(517)) == before + 1,
+    )
+    # Решение 2026-10-02: кнопки «Приду» / «Перенести запись» в напоминании.
+    markup = fake.sent(517)[before].get("reply_markup") or {}
+    check(
+        "в напоминании кнопки «Приду» и «Перенести запись», клавиатура одноразовая",
+        [b["text"] for b in (markup.get("keyboard") or [[]])[0]] == ["Приду", "Перенести запись"]
+        and markup.get("one_time_keyboard") is True,
+        str(markup),
+    )
+    check(
+        "кнопки сохранены в исходящем сообщении (повтор отправки уйдёт с ними)",
+        bool(
+            db_rows("SELECT id FROM messages WHERE buttons IS NOT NULL AND text LIKE 'Напоминаем%'")
+        ),
+    )
+    reply = say(517, "Приду")
+    check(
+        "нажал «Приду» → «Спасибо! Ждём вас» и отметка о подтверждении визита",
+        "Спасибо! Ждём вас" in reply
+        and db_rows("SELECT client_confirmed_at FROM bookings WHERE id=?", b517["id"])[0][
+            "client_confirmed_at"
+        ]
+        is not None,
+        reply,
+    )
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/bookings?from={iso(D4)}").text
+    check("в «Записях» видно, что клиент подтвердил визит", "клиент подтвердил визит" in html)
+    reply = say(517, "Перенести запись")
+    check(
+        "нажал «Перенести запись» → перенос в чате (у клиента две записи — какую?)",
+        "Какую запись перенести" in reply,
+        reply,
     )
     sent = remind(start517 - timedelta(hours=1))
     check(

@@ -136,6 +136,10 @@ class ScheduleProvider(Protocol):
         """Перенести запись клиента; False — время занято или вне смены."""
         ...
 
+    def confirm_visit(self, booking_id: int) -> bool:
+        """Клиент подтвердил визит («Приду» в напоминании); False — записи нет."""
+        ...
+
 
 # --------------------------------------------------------------------------- #
 # Итог
@@ -153,6 +157,7 @@ class BookingKind(str, enum.Enum):
     KEPT = "KEPT"  # клиент передумал отменять
     MOVE_ASK = "MOVE_ASK"  # на какое время перенести (показаны окна)
     MOVED = "MOVED"  # запись перенесена
+    VISIT_CONFIRMED = "VISIT_CONFIRMED"  # «Приду» — клиент подтвердил визит
 
 
 @dataclass(frozen=True)
@@ -326,6 +331,13 @@ _CANCEL_WORDS_RE = re.compile(
 )
 _NO_RE = re.compile(
     r"^\s*(?:нет|не надо|не нужно|не отменя\w*|оставьте|оставь|передумал\w*)\b", re.IGNORECASE
+)
+
+
+# Кнопка «Приду» в напоминании (или ответ своими словами) — подтверждение визита.
+_COME_RE = re.compile(
+    r"\s*(?:да[,!]?\s*)?(?:приду|буду|подтверждаю|обязательно приду|приду обязательно)[\s!.)]*",
+    re.IGNORECASE,
 )
 
 
@@ -863,6 +875,17 @@ class BookingEngine:
         last = provider.last_change()
         number = _NUMBER_ONLY_RE.fullmatch(text)
         index = int(number.group(1)) if number else request.choice
+
+        # «Приду» (кнопка напоминания, решение 2026-10-02) — ближайшая запись подтверждена.
+        if bookings and _COME_RE.fullmatch(text):
+            target = bookings[0]
+            if provider.confirm_visit(target.id):
+                return BookingOutcome(
+                    kind=BookingKind.VISIT_CONFIRMED,
+                    reply=f"Спасибо! Ждём вас: {_describe(target, today)}.",
+                    source=source,
+                    change_booking_id=target.id,
+                )
 
         if last is not None:
             kind, action, booking_id, options, shown_day = last

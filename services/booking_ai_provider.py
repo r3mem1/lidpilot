@@ -25,7 +25,7 @@ from ai.booking import (
     SlotOption,
 )
 from models import AiResponse, Booking, BookingSource, Business, Master, Message, Service
-from services import booking_service, master_service, schedule_service
+from services import audit_service, booking_service, master_service, schedule_service
 
 
 class DbScheduleProvider:
@@ -306,6 +306,23 @@ class DbScheduleProvider:
             booking_service.move_by_client(self._db, self._business(), booking, master, starts_at)
         except booking_service.BookingConflict:
             return False
+        return True
+
+    def confirm_visit(self, booking_id: int) -> bool:
+        booking = self._own_booking(booking_id)
+        if booking is None:
+            return False
+        if self._dry_run:
+            return True
+        booking.client_confirmed_at = datetime.now(UTC)
+        audit_service.log_event(
+            self._db,
+            event_type=audit_service.EventType.BOOKING_VISIT_CONFIRMED,
+            message=f"Клиент подтвердил визит по записи #{booking.id}",
+            business_id=self._business_id,
+            payload={"booking_id": booking.id},
+        )
+        self._db.commit()
         return True
 
     def last_context(self) -> tuple[BookingKind, BookingRequest, list[int]] | None:

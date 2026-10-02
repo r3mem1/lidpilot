@@ -232,6 +232,7 @@ BOOKING_STEP: dict[BookingKind, str] = {
     BookingKind.KEPT: "клиент передумал отменять",
     BookingKind.MOVE_ASK: "подбирается время для переноса",
     BookingKind.MOVED: "клиент перенёс запись",
+    BookingKind.VISIT_CONFIRMED: "клиент подтвердил визит",
 }
 
 _SAFE_REPLIES: dict[EscalationReason, str | None] = {

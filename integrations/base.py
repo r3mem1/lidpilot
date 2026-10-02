@@ -50,8 +50,11 @@ class ChannelSendError(ChannelError):
 class ChannelClient(Protocol):
     """Общий контракт клиента канала (раздел 1)."""
 
-    def send_message(self, chat_id: str, text: str) -> str:
-        """Отправить сообщение, вернуть внешний id (последнего фрагмента)."""
+    def send_message(self, chat_id: str, text: str, buttons: list[str] | None = None) -> str:
+        """Отправить сообщение, вернуть внешний id (последнего фрагмента).
+        buttons — кнопки-ответы (решение 2026-10-02: «Приду» / «Перенести запись»):
+        нажатие приходит обычным текстовым сообщением клиента и после него
+        клавиатура скрывается."""
         ...
 
 

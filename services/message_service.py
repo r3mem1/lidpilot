@@ -809,7 +809,8 @@ def deliver_outgoing(db: Session, message_id: int) -> DeliveryStatus | None:
 
     message.delivery_attempts += 1
     try:
-        external_id = client.send_message(customer.external_id, message.text)
+        buttons = [str(b) for b in message.buttons] if message.buttons else None
+        external_id = client.send_message(customer.external_id, message.text, buttons=buttons)
     except ChannelSendError as exc:
         exhausted = message.delivery_attempts >= settings.message_max_attempts
         final = exc.blocked_by_user or not exc.retryable or exhausted

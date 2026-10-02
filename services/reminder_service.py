@@ -47,6 +47,9 @@ SOON_BEFORE = timedelta(hours=2)
 SOON_MIN_NOTICE = timedelta(hours=3)
 
 ACTIVE = (BookingStatus.PENDING, BookingStatus.CONFIRMED)
+# Кнопки-ответы (решение 2026-10-02): нажатие приходит обычным сообщением клиента —
+# «Приду» подтверждает визит, «Перенести запись» запускает перенос в чате (ai/booking.py).
+REMINDER_BUTTONS = ("Приду", "Перенести запись")
 
 
 def _aware(value: datetime) -> datetime:
@@ -65,9 +68,11 @@ def reminder_text(db: Session, booking: Booking, kind: str, now: datetime) -> st
     if kind == "day":
         return (
             f"Напоминаем: {when} вы записаны — {what.strip()}.{address} "
-            "Если планы изменились — напишите сюда, перенесём."
+            "Нажмите «Приду», чтобы подтвердить, или «Перенести запись», если планы изменились."
         )
-    return f"Ждём вас {when}: {what.strip()}.{address} До встречи!"
+    return (
+        f"Ждём вас {when}: {what.strip()}.{address} Если не успеваете — нажмите «Перенести запись»."
+    )
 
 
 def _due(db: Session, now: datetime, kind: str) -> list[int]:
@@ -124,6 +129,7 @@ def send_due(db: Session, now: datetime | None = None) -> int:
                 sender_type=SenderType.AI,
                 text=reminder_text(db, booking, kind, now),
                 content_type="text",
+                buttons=list(REMINDER_BUTTONS),
                 delivery_status=DeliveryStatus.PENDING,
             )
             db.add(message)

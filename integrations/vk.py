@@ -21,6 +21,7 @@ Authorization, а не в URL; в тексты исключений и логи 
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import secrets
@@ -217,18 +218,38 @@ class VkClient:
         self._call("groups.deleteCallbackServer", {"group_id": group_id, "server_id": server_id})
 
     # -- сообщения ------------------------------------------------------------ #
-    def send_message(self, chat_id: str, text: str) -> str:
+    def send_message(self, chat_id: str, text: str, buttons: list[str] | None = None) -> str:
         """Отправить текст клиенту. Длинный текст режется на части; random_id
-        защищает от дубля при повторе запроса после сетевой ошибки."""
+        защищает от дубля при повторе запроса после сетевой ошибки. buttons —
+        текстовые кнопки (one_time) под последним фрагментом: нажатие приходит
+        обычным сообщением с текстом кнопки."""
         chunks = split_text(text, MAX_MESSAGE_CHARS)
         if not chunks:
             raise ChannelSendError("Пустой текст сообщения")
         last_id = ""
-        for chunk in chunks:
-            result = self._call(
-                "messages.send",
-                {"peer_id": chat_id, "message": chunk, "random_id": self._random_id()},
-            )
+        for i, chunk in enumerate(chunks):
+            params: dict[str, Any] = {
+                "peer_id": chat_id,
+                "message": chunk,
+                "random_id": self._random_id(),
+            }
+            if buttons and i == len(chunks) - 1:
+                params["keyboard"] = json.dumps(
+                    {
+                        "one_time": True,
+                        "buttons": [
+                            [
+                                {
+                                    "action": {"type": "text", "label": b[:40]},
+                                    "color": "positive" if n == 0 else "secondary",
+                                }
+                                for n, b in enumerate(buttons)
+                            ]
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            result = self._call("messages.send", params)
             last_id = str(result)
         return last_id
 

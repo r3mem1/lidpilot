@@ -344,6 +344,29 @@ except ChannelSendError as exc:
     )
 check("repr клиента не раскрывает ключ", TOKEN_A not in repr(client))
 
+# Решение 2026-10-02: кнопки-ответы («Приду» / «Перенести запись») в VK — keyboard.
+vk_sent: list[dict] = []
+
+
+def vk_capture(request: httpx.Request) -> httpx.Response:
+    from urllib.parse import parse_qs
+
+    vk_sent.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+    return httpx.Response(200, json={"response": 777})
+
+
+VkClient(
+    TOKEN_A, base_url="https://api.vk.test", transport=httpx.MockTransport(vk_capture)
+).send_message("5", "Напоминаем", buttons=["Приду", "Перенести запись"])
+keyboard = json.loads(vk_sent[-1].get("keyboard", "{}"))
+check(
+    "VK: кнопки уходят одноразовой клавиатурой с текстами кнопок",
+    keyboard.get("one_time") is True
+    and [b["action"]["label"] for b in keyboard["buttons"][0]] == ["Приду", "Перенести запись"]
+    and all(b["action"]["type"] == "text" for b in keyboard["buttons"][0]),
+    str(keyboard),
+)
+
 # =========================================================================== #
 PWD = "Str0ng-Pass-1"
 with TestClient(app) as c:
