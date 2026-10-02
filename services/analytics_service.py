@@ -17,6 +17,9 @@ from sqlalchemy.orm import Session
 from models import (
     AiResponse,
     AiResponseStatus,
+    Booking,
+    BookingSource,
+    BookingStatus,
     Conversation,
     ConversationStatus,
     Customer,
@@ -24,6 +27,7 @@ from models import (
     Lead,
     LeadPriority,
     LeadStatus,
+    Master,
     Message,
     SenderType,
     utcnow,
@@ -55,6 +59,45 @@ def resolve_period(
 
 def _count(db: Session, stmt) -> int:
     return int(db.scalar(stmt) or 0)
+
+
+def booking_summary(db: Session, ctx: BusinessContext, start: datetime, end: datetime) -> dict:
+    """Записи к мастерам за период — вне ТЗ (§22), проверка сайта 2026-10-02:
+    для барбершопа это главный показатель. Все цифры — по записям, сделанным за
+    период (по дате визита будущие записи в прошедший период не попали бы и цифры
+    блока не сходились бы): via_bot — ассистентом, cancelled — из них отменено,
+    by_master — сколько активных записей получил каждый мастер."""
+    bid = ctx.business_id
+    created = (Booking.business_id == bid, Booking.created_at >= start, Booking.created_at <= end)
+    by_master = db.execute(
+        select(Master.display_name, func.count(Booking.id))
+        .join(Master, Master.id == Booking.master_id)
+        .where(*created, Booking.status.in_((BookingStatus.PENDING, BookingStatus.CONFIRMED)))
+        .group_by(Master.display_name)
+        .order_by(func.count(Booking.id).desc())
+    ).all()
+    return {
+        "created": _count(db, select(func.count(Booking.id)).where(*created)),
+        "via_bot": _count(
+            db,
+            select(func.count(Booking.id)).where(*created, Booking.source == BookingSource.AI),
+        ),
+        "cancelled": _count(
+            db,
+            select(func.count(Booking.id)).where(
+                *created, Booking.status == BookingStatus.CANCELLED
+            ),
+        ),
+        "confirmed_by_client": _count(
+            db,
+            select(func.count(Booking.id)).where(
+                Booking.business_id == bid,
+                Booking.client_confirmed_at >= start,
+                Booking.client_confirmed_at <= end,
+            ),
+        ),
+        "by_master": [(name, int(count)) for name, count in by_master],
+    }
 
 
 def period_summary(

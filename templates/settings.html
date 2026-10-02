@@ -10,7 +10,7 @@
 
 <div class="grid grid--main">
   <section class="sheet">
-    <div class="sheet-head"><h2>Данные компании</h2><span class="tag">{{ label('business_status', business.status) }}</span></div>
+    <div class="sheet-head"><h2>Данные компании</h2><span class="tag">{% if subscription and not subscription.active and business.status.value != 'SUSPENDED' %}{{ 'Пробный период закончился' if subscription.plan.value == 'TRIAL' else 'Тариф закончился' }}{% else %}{{ label('business_status', business.status) }}{% endif %}</span></div>
     <form class="sheet-body" data-api-form data-method="PUT" data-url="/businesses/{{ business_id }}" data-success="message:Данные сохранены" novalidate>
       <div class="field">
         <label for="name">Название</label>

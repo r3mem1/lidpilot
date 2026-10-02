@@ -377,6 +377,16 @@ def _has_reply_after(db: Session, message: Message) -> bool:
     )
 
 
+def _suspended_reply(business: Business) -> str:
+    """Ответ клиенту приостановленной компании: без обещания ответа в чате."""
+    if business.phone and business.phone.strip():
+        return (
+            "Сейчас мы не можем ответить в этом чате. "
+            f"Пожалуйста, позвоните нам: {business.phone.strip()}."
+        )
+    return "Сейчас мы не можем ответить в этом чате — пожалуйста, свяжитесь с нами по телефону."
+
+
 def _dedupe_template(db: Session, conversation_id: int, text: str) -> str:
     """Тот же шаблон уже уходил клиенту (после последнего ответа менеджера) —
     вместо повтора короткое «администратор уже видит ваш запрос»."""
@@ -405,6 +415,7 @@ def _auto_reply(
     *,
     reason: str,
     payload: dict,
+    dedupe: bool = True,
 ) -> DeliveryStatus | None:
     """Шаблонный ответ клиенту без вызова AI (компания приостановлена, срок
     подписки, сбой обработки, контроль ответа). Молчит, только если владелец
@@ -412,7 +423,8 @@ def _auto_reply(
     business = db.get_one(Business, conversation.business_id)
     if not business.ai_auto_reply or conversation.handled_by_manager:
         return None
-    text = _dedupe_template(db, conversation.id, text)
+    if dedupe:
+        text = _dedupe_template(db, conversation.id, text)
     outgoing = Message(
         business_id=business.id,
         conversation_id=conversation.id,
@@ -542,12 +554,16 @@ def _run(db: Session, message_id: int) -> None:
             payload=log_context,
         )
         db.commit()
+        # Проверка сайта 2026-10-02: сотрудники приостановленной компании не могут
+        # ответить в чате — не обещаем ответ, а даём телефон (и не заменяем повтор
+        # на «администратор уже видит ваш запрос»).
         _auto_reply(
             db,
             conversation,
-            REPLY_STAFF_WILL_ANSWER,
+            _suspended_reply(business),
             reason="BUSINESS_SUSPENDED",
             payload=log_context,
+            dedupe=False,
         )
         return
 

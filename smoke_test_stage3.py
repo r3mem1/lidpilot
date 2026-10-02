@@ -68,7 +68,6 @@ from ai.llm_client import LLMResult, LLMUnavailable  # noqa: E402
 from ai.pipeline import (  # noqa: E402
     REPLY_RECEIVED,
     REPLY_SPAM,
-    REPLY_STAFF_WILL_ANSWER,
     AIPipeline,
 )
 from config import settings  # noqa: E402
@@ -962,9 +961,13 @@ with TestClient(app) as c:
         == "DONE",
     )
     check(
-        "приостановлена: AI не запускается, клиенту шаблон «сотрудник ответит»",
+        # Проверка сайта 2026-10-02: сотрудники приостановленной компании ответить
+        # не могут — не обещаем ответ в чате, а просим связаться по телефону.
+        "приостановлена: AI не запускается, клиенту — «не можем ответить в чате», без обещания",
         len(fake.sent(TOKEN_A)) == sent_before + 1
-        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_STAFF_WILL_ANSWER
+        and "не можем ответить в этом чате" in fake.sent(TOKEN_A)[-1]["text"]
+        and "администратор" not in fake.sent(TOKEN_A)[-1]["text"].lower()
+        and "сотрудник ответит" not in fake.sent(TOKEN_A)[-1]["text"].lower()
         and db_rows("SELECT COUNT(*) AS n FROM ai_responses WHERE message_id = ?", mid)[0]["n"]
         == 0,
     )

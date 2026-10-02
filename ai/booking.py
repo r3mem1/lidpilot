@@ -73,6 +73,7 @@ class ScheduleProvider(Protocol):
     """Расписание одной компании для одного диалога (данные только этой компании)."""
 
     today: date  # «сегодня» в поясе компании
+    now: datetime  # «сейчас» в поясе компании, без tzinfo (проверка сайта 2026-10-02)
 
     def services(self) -> list[BookableService]: ...
 
@@ -96,6 +97,16 @@ class ScheduleProvider(Protocol):
 
     def hold(self, service_id: int, master_id: int, starts_at: datetime) -> int | None:
         """Поставить бронь; id брони или None, если время уже занято."""
+        ...
+
+    def working_hours(
+        self, day: date, service_id: int, master_id: int | None = None
+    ) -> list[tuple[time, time]]:
+        """Смены за день у мастеров, которые делают услугу (или у названного)."""
+        ...
+
+    def service_masters(self, service_id: int) -> list[tuple[int, str]]:
+        """Активные мастера, которые делают услугу."""
         ...
 
     def master_load(self, day: date) -> dict[int, int]:
@@ -368,6 +379,46 @@ def _text_stems(text: str) -> set[str]:
 
 def _name_stems(name: str) -> list[str]:
     return [_stem(w) for w in _words(name) if len(w) >= 4]
+
+
+# Слова просьбы о цене или записи, дни и время — не название услуги (проверка сайта
+# 2026-10-02: «сколько стоит маникюр?» — понять, что спросили именно про маникюр).
+_NOT_SERVICE_WORDS = (
+    "запишите записаться записать запись записи хочу хотела хотел можно нужно надо "
+    "сколько стоит стоят стоимость цена цены ценник почём почем прайс услуга услуги "
+    "подскажите скажите пожалуйста здравствуйте привет добрый доброе день вечер утро "
+    "сегодня завтра послезавтра утром днём днем вечером неделе неделю месяц время "
+    "часов часа минут меня мне есть ваша ваши ваше будет будут делаете делают делает "
+    "сделать сделаете можете могу какие какая какой какое сколечко также тоже "
+    "понедельник вторник среду среда четверг пятницу пятница субботу суббота "
+    "воскресенье января февраля марта апреля мая июня июля августа сентября октября "
+    "ноября декабря мастер мастеру мастера окна окно окон окошко окошки свободно "
+    "свободное свободные свободен опоздаю опаздываю задерживаюсь перенести перенос "
+    "отменить отмена приду буду"
+)
+_NOT_SERVICE_STEMS = {_stem(w) for w in _NOT_SERVICE_WORDS.split()}
+
+
+def unknown_service(
+    text: str, service_names: list[str], master_names: list[str] | None = None
+) -> str | None:
+    """Название услуги, которой нет в прайсе («маникюр», скрытая услуга), или None.
+    Осторожно: слово хоть немного похожее на услугу или мастера не считается чужим."""
+    known = {_stem(w) for name in service_names for w in _words(name) if len(w) >= 4}
+    known |= {_stem(w, 4) for name in master_names or [] for w in _words(name)}
+    rest = [
+        w
+        for w in _words(text)
+        if len(w) >= 4
+        and _stem(w) not in _NOT_SERVICE_STEMS
+        and _stem(w) not in known
+        and _stem(w, 4) not in known
+    ]
+    if not rest or len(rest) > 3:
+        return None
+    if any(_stem(w) in known for w in _words(text) if len(w) >= 4):
+        return None  # названа и известная услуга — отвечаем про неё
+    return " ".join(rest)
 
 
 def service_candidates(text: str, services: list[BookableService]) -> list[int]:
@@ -671,6 +722,36 @@ def _describe(booking: ClientBooking, today: date) -> str:
     )
 
 
+def _no_schedule(day: date, master_name: str | None) -> str:
+    if master_name:
+        return f"Мастер {master_name} {day:%d.%m} не работает. "
+    return f"На {day:%d.%m} расписание пока не составлено. "
+
+
+def _why_unavailable(
+    provider: ScheduleProvider,
+    day: date,
+    at: time,
+    service_id: int,
+    master_id: int | None,
+    master_name: str | None,
+) -> str:
+    """Почему названное время нельзя (проверка сайта 2026-10-02): раньше на всё
+    было «уже занято» — и на прошедшее время, и на нерабочее, и на день без смен."""
+    moment = datetime.combine(day, at)
+    when = format_when(moment, provider.today)
+    if moment <= provider.now:
+        return f"{_capitalize(when)} — это время уже прошло. "
+    hours = provider.working_hours(day, service_id, master_id)
+    if not hours:
+        return _no_schedule(day, master_name)
+    if not any(start <= at < end for start, end in hours):
+        ranges = " и ".join(f"с {start:%H:%M} до {end:%H:%M}" for start, end in hours)
+        who = f"мастер {master_name} принимает" if master_name else "принимаем"
+        return f"В {at:%H:%M} не работаем: {day:%d.%m} {who} {ranges}. "
+    return f"К сожалению, {when} уже занято. "
+
+
 def _capitalize(text: str) -> str:
     return text[:1].upper() + text[1:]
 
@@ -765,7 +846,14 @@ class BookingEngine:
             return self._windows(provider, request, service, names.get(service or 0), source)
 
         service_id = request.service_id or offer_service
-        if service_id is None and len(services) == 1:
+        # Проверка сайта 2026-10-02: клиент назвал услугу, которой нет («на маникюр»), —
+        # говорим прямо и не подставляем единственную услугу прайса вместо неё.
+        missing = (
+            unknown_service(text, [s.name for s in services], [n for _, n in provider.masters()])
+            if service_id is None
+            else None
+        )
+        if service_id is None and len(services) == 1 and not missing:
             service_id = services[0].id
         if service_id is None or service_id not in names:
             # Слово клиента подходит к нескольким услугам («на стрижку») — спрашиваем
@@ -775,7 +863,8 @@ class BookingEngine:
             lines = "\n".join(f"{i}) {names[sid]}" for i, sid in enumerate(options, 1))
             return BookingOutcome(
                 kind=BookingKind.ASK_SERVICE,
-                reply=f"На какую услугу вас записать?\n{lines}\nНапишите номер или название.",
+                reply=(f"Услуги «{missing}» у нас нет. " if missing else "")
+                + f"На какую услугу вас записать?\n{lines}\nНапишите номер или название.",
                 source=source,
                 context=replace(request, service_id=None, choice=None, agree=False),
                 service_options=tuple(options),
@@ -785,78 +874,111 @@ class BookingEngine:
         master_id = request.master_id
         master_name = dict(provider.masters()).get(master_id) if master_id else None
 
-        def hold(slots: list[SlotOption]) -> BookingOutcome | None:
-            return self._try_hold(
-                provider, service_id, service_name, _least_loaded(provider, slots), source, address
-            )
+        # Проверка сайта 2026-10-02: названный мастер не делает услугу — говорим
+        # прямо и записываем к тем, кто делает (а не «окон нет на две недели»).
+        note = ""
+        if master_id is not None:
+            doers = provider.service_masters(service_id)
+            if master_id not in dict(doers):
+                who = ", ".join(name for _, name in doers)
+                note = f"Мастер {master_name} не делает «{service_name}»" + (
+                    f" — её {'делает' if len(doers) == 1 else 'делают'} {who}. " if who else ". "
+                )
+                master_id, master_name = None, None
 
-        # Ответ на прошлое предложение: номер, время, мастер или «без разницы».
-        if offered and service_id == offer_service:
-            picked = _pick_from_offer(request, offered)
-            if picked:
-                outcome = hold(picked)
-                if outcome is not None:
-                    return outcome
+        def book(master_id: int | None, master_name: str | None) -> BookingOutcome:
+            def hold(slots: list[SlotOption]) -> BookingOutcome | None:
+                return self._try_hold(
+                    provider,
+                    service_id,
+                    service_name,
+                    _least_loaded(provider, slots),
+                    source,
+                    address,
+                )
 
-        if request.at is not None:
-            days = (
-                [request.day]
-                if request.day
-                else [today + timedelta(days=i) for i in range(HORIZON_DAYS)]
-            )
-            for day in days:
-                exact = [
-                    s
-                    for s in provider.free_slots(service_id, day, day, master_id)
-                    if s.local_start.time() == request.at
-                ]
-                if exact:
-                    # Свободен один мастер или клиенту всё равно — бронируем сразу;
-                    # свободны несколько, а мастер не назван — предлагаем выбрать.
-                    if len({s.master_id for s in exact}) == 1 or request.any_master:
-                        outcome = hold(exact)
-                        if outcome is not None:
-                            return outcome
-                    else:
-                        return self._ask_master(service_id, service_name, exact, today, source)
-                    break
-            # Нужное время занято: ближайшие к нему окна в тот же день, иначе — ближайшие вообще.
-            day = request.day or today
-            same_day = provider.free_slots(service_id, day, day, master_id)
-            target = datetime.combine(day, request.at)
-            same_day.sort(
-                key=lambda s: abs((s.local_start.replace(tzinfo=None) - target).total_seconds())
-            )
-            options = sorted(_pick_times(same_day), key=lambda s: (s.starts_at, s.master_name))
-            prefix = (
-                f"К сожалению, {format_when(datetime.combine(day, request.at), today)} уже занято. "
-            )
-            if not options:
-                options = _pick_times(
-                    provider.free_slots(
-                        service_id, today, today + timedelta(days=HORIZON_DAYS - 1), master_id
+            # Ответ на прошлое предложение: номер, время, мастер или «без разницы».
+            if offered and service_id == offer_service:
+                picked = _pick_from_offer(request, offered)
+                if picked:
+                    outcome = hold(picked)
+                    if outcome is not None:
+                        return outcome
+
+            if request.at is not None:
+                days = (
+                    [request.day]
+                    if request.day
+                    else [today + timedelta(days=i) for i in range(HORIZON_DAYS)]
+                )
+                for day in days:
+                    exact = [
+                        s
+                        for s in provider.free_slots(service_id, day, day, master_id)
+                        if s.local_start.time() == request.at
+                    ]
+                    if exact:
+                        # Клиент просил другого мастера (note) — без его согласия не
+                        # записываем: предлагаем время, номер варианта выбирает он.
+                        if note:
+                            return self._offer(
+                                service_id, service_name, exact, today, source, "", None
+                            )
+                        # Свободен один мастер или клиенту всё равно — бронируем сразу;
+                        # свободны несколько, а мастер не назван — предлагаем выбрать.
+                        if len({s.master_id for s in exact}) == 1 or request.any_master:
+                            outcome = hold(exact)
+                            if outcome is not None:
+                                return outcome
+                        else:
+                            return self._ask_master(service_id, service_name, exact, today, source)
+                        break
+                # Нужное время занято: ближайшие к нему окна в тот же день, иначе — ближайшие вообще.
+                day = request.day or today
+                same_day = provider.free_slots(service_id, day, day, master_id)
+                target = datetime.combine(day, request.at)
+                same_day.sort(
+                    key=lambda s: abs((s.local_start.replace(tzinfo=None) - target).total_seconds())
+                )
+                options = sorted(_pick_times(same_day), key=lambda s: (s.starts_at, s.master_name))
+                prefix = _why_unavailable(
+                    provider, day, request.at, service_id, master_id, master_name
+                )
+                if not options:
+                    options = _pick_times(
+                        provider.free_slots(
+                            service_id, today, today + timedelta(days=HORIZON_DAYS - 1), master_id
+                        )
                     )
+                return self._offer(
+                    service_id, service_name, options, today, source, prefix, master_name
+                )
+
+            day_from = request.day or today
+            day_to = request.day or today + timedelta(days=HORIZON_DAYS - 1)
+            slots = [
+                s
+                for s in provider.free_slots(service_id, day_from, day_to, master_id)
+                if _part_ok(s, request.part_of_day)
+            ]
+            prefix = ""
+            if not slots and request.day:
+                prefix = (
+                    "На этот день свободного времени нет. "
+                    if provider.working_hours(request.day, service_id, master_id)
+                    else _no_schedule(request.day, master_name)
+                )
+                slots = provider.free_slots(
+                    service_id, today, today + timedelta(days=HORIZON_DAYS - 1), master_id
                 )
             return self._offer(
-                service_id, service_name, options, today, source, prefix, master_name
+                service_id, service_name, _pick_times(slots), today, source, prefix, master_name
             )
 
-        day_from = request.day or today
-        day_to = request.day or today + timedelta(days=HORIZON_DAYS - 1)
-        slots = [
-            s
-            for s in provider.free_slots(service_id, day_from, day_to, master_id)
-            if _part_ok(s, request.part_of_day)
-        ]
-        prefix = ""
-        if not slots and request.day:
-            prefix = "На этот день свободного времени нет. "
-            slots = provider.free_slots(
-                service_id, today, today + timedelta(days=HORIZON_DAYS - 1), master_id
-            )
-        return self._offer(
-            service_id, service_name, _pick_times(slots), today, source, prefix, master_name
-        )
+        outcome = book(master_id, master_name)
+        if note and outcome.reply:
+            outcome = replace(outcome, reply=note + outcome.reply)
+        return outcome
 
     # ------------------------------------------------------------------ #
     # Отмена и перенос своей записи клиентом (решение заказчика 2026-10-01)

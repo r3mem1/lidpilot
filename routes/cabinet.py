@@ -957,6 +957,8 @@ def analytics_page(
         # Некорректный период (конец раньше начала, больше года): последние 30 суток.
         start, end, custom = now - timedelta(days=30), now, False
     summary = analytics_service.period_summary(db, ctx, start, end, tz)
+    # Проверка сайта 2026-10-02: записи — главный показатель барбершопа.
+    summary["bookings"] = analytics_service.booking_summary(db, ctx, start, end)
     daily_max = max((d["incoming"] for d in summary["daily"]), default=0)
     return render(
         request,

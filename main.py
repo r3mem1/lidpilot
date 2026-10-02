@@ -203,6 +203,9 @@ async def lifespan(app: FastAPI):
         "sqlite" if settings.is_sqlite else "postgresql",
     )
     logger.info("Внешний трекер ошибок Sentry: %s", "включён" if MONITORING_ENABLED else "выключен")
+    if settings.is_production and not (settings.billing_contact or "").strip():
+        # Проверка сайта 2026-10-02: баннер «напишите в поддержку» без контакта.
+        logger.warning("BILLING_CONTACT не задан: компании с истёкшим сроком не видят, куда писать")
     tasks: list[asyncio.Task] = []
     if settings.reprocess_interval_seconds > 0:
         tasks.append(asyncio.create_task(_reprocess_loop()))

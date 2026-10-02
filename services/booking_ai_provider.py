@@ -24,7 +24,16 @@ from ai.booking import (
     MasterWindows,
     SlotOption,
 )
-from models import AiResponse, Booking, BookingSource, Business, Master, Message, Service
+from models import (
+    AiResponse,
+    Booking,
+    BookingSource,
+    Business,
+    Master,
+    MasterShift,
+    Message,
+    Service,
+)
 from services import audit_service, booking_service, master_service, schedule_service
 
 
@@ -48,7 +57,8 @@ class DbScheduleProvider:
         self._conversation_id = conversation_id
         self._customer_id = customer_id
         self._client_name = client_name
-        self.today: date = datetime.now(self._tz).date()
+        self.now: datetime = datetime.now(self._tz).replace(tzinfo=None)
+        self.today: date = self.now.date()
 
     # -- справочники ---------------------------------------------------------- #
     def _business(self) -> Business:
@@ -76,6 +86,38 @@ class DbScheduleProvider:
         return [(m.id, m.display_name) for m in rows]
 
     # -- расписание ----------------------------------------------------------- #
+    def service_masters(self, service_id: int) -> list[tuple[int, str]]:
+        return [
+            (m.id, m.display_name)
+            for m in master_service.masters_for_service(self._db, self._business_id, service_id)
+        ]
+
+    def working_hours(
+        self, day: date, service_id: int, master_id: int | None = None
+    ) -> list[tuple[time, time]]:
+        ids = [mid for mid, _ in self.service_masters(service_id)]
+        if master_id is not None:
+            ids = [master_id]
+        if not ids:
+            return []
+        rows = self._db.execute(
+            select(MasterShift.start_time, MasterShift.end_time)
+            .where(
+                MasterShift.business_id == self._business_id,
+                MasterShift.master_id.in_(ids),
+                MasterShift.day == day,
+            )
+            .order_by(MasterShift.start_time)
+        ).all()
+        # Пересекающиеся смены разных мастеров — одним интервалом («с 10:00 до 20:00»).
+        merged: list[tuple[time, time]] = []
+        for start, end in rows:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        return merged
+
     def free_slots(
         self, service_id: int, day_from: date, day_to: date, master_id: int | None = None
     ) -> list[SlotOption]:

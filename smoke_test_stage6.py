@@ -469,9 +469,11 @@ with TestClient(app) as c:
         == n_msgs + 1,
     )
     check(
-        "…AI не запускается, клиенту шаблон «сотрудник ответит» (решение 2026-09-27)",
+        # Проверка сайта 2026-10-02: ответить сотрудники не могут — ответа не обещаем.
+        "…AI не запускается, клиенту — «не можем ответить в чате», без обещания ответа",
         len(fake.sent(TOKEN_A)) == sent_before + 1
-        and fake.sent(TOKEN_A)[-1]["text"] == REPLY_STAFF_WILL_ANSWER
+        and "не можем ответить в этом чате" in fake.sent(TOKEN_A)[-1]["text"]
+        and "сотрудник ответит" not in fake.sent(TOKEN_A)[-1]["text"].lower()
         and conv["status"] == "NEEDS_ATTENTION"
         and conv["attention_reason"] == "BUSINESS_SUSPENDED",
         str(dict(conv)),
@@ -790,6 +792,10 @@ with TestClient(app) as c:
         and "Свежие ошибки" in ov.text
         and "Интеграции со сбоем" in ov.text
         and "Пробный период истёк" in ov.text,
+    )
+    check(
+        "BILLING_CONTACT не задан → на обзоре предупреждение админу",
+        "Не задан контакт для оплаты" in ov.text,
     )
     check(
         "обзор: интеграция в сбое и компания с истёкшим trial видны",

@@ -20,7 +20,7 @@
         </select>
       {% else %}
         <span class="cell-title">{{ business.name }}</span>
-        <span class="cell-sub">{{ label('business_status', business.status) }}</span>
+        <span class="cell-sub">{% if subscription and not subscription.active and business.status.value != 'SUSPENDED' %}{{ 'Пробный период закончился' if subscription.plan.value == 'TRIAL' else 'Тариф закончился' }}{% else %}{{ label('business_status', business.status) }}{% endif %}</span>
       {% endif %}
     </div>
 

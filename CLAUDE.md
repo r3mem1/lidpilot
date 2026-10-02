@@ -61,15 +61,15 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head                   # миграции; новая: alembic revision --autogenerate -m "..."
 uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
-python smoke_test_ai.py                # 180 проверок этапа 2
+python smoke_test_ai.py                # 183 проверки этапа 2
 python smoke_test_stage3.py            # 149 проверок этапа 3 (+ серия сообщений, контроль ответа)
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 182 проверки этапа 5
-python smoke_test_stage6.py            # 134 проверки этапа 6
+python smoke_test_stage6.py            # 135 проверок этапа 6
 python smoke_test_stage7.py            # 36 проверок этапа 7 (Sentry, срок хранения логов)
-python smoke_test_stage8.py            # 43 проверки этапа 8 (подписка, onboarding + шаг «запись к мастерам»)
+python smoke_test_stage8.py            # 45 проверок этапа 8 (подписка, onboarding + шаг «запись к мастерам»)
 python smoke_test_stage9.py            # 72 проверки этапа 9 (VK, rate limit в БД, кнопки VK)
-python smoke_test_stage10.py           # 218 проверок: мастера, расписание (шаблон смен), записи, перенос и отмена (в т.ч. клиентом в чате), AI-запись, имя и телефон клиента, напоминания с кнопками «Приду»/«Перенести запись», приглашение к мастеру, заявки без брони, проверка ответа, уведомления
+python smoke_test_stage10.py           # 227 проверок: мастера, расписание (шаблон смен), записи, перенос и отмена (в т.ч. клиентом в чате), AI-запись, имя и телефон клиента, напоминания с кнопками «Приду»/«Перенести запись», приглашение к мастеру, заявки без брони, проверка ответа, уведомления
 python scripts/seed_demo.py            # демо-данные для кабинета (только на dev-БД)
 ruff check . && ruff format --check .  # стиль
 pyright                                # типы (LSP-плагин pyright-lsp)

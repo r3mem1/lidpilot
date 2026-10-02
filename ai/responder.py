@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
+from ai.booking import unknown_service
 from ai.classifier import Classification, Intent
 from ai.context import BusinessKnowledge, HistoryTurn, ServiceInfo
 from ai.faq import format_money
@@ -144,10 +145,21 @@ class Responder:
         used_prices: tuple[Decimal, ...] = ()
 
         if classification.intent is Intent.PRICE:
-            matched = _match_services(text, knowledge) or list(knowledge.services)
+            found = _match_services(text, knowledge)
+            # Проверка сайта 2026-10-02: спросили о услуге, которой нет, — говорим прямо.
+            missing = (
+                None
+                if found
+                else unknown_service(
+                    text, [s.name for s in knowledge.services], list(knowledge.masters)
+                )
+            )
+            matched = found or list(knowledge.services)
             if matched and len(matched) <= 5:
                 listing = ", ".join(f"{s.name} — {format_money(s.price)}" for s in matched)
-                reply = f"Актуальные цены: {listing}. Подскажите, что вас интересует?"
+                reply = (f"Услуги «{missing}» у нас нет. " if missing else "") + (
+                    f"Актуальные цены: {listing}. Подскажите, что вас интересует?"
+                )
                 used_prices = tuple(s.price for s in matched)
                 needs_manager = False
             else:

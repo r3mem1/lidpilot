@@ -346,8 +346,22 @@ with TestClient(app) as c:
         "баннер: пробный период закончился + контакт",
         "notice--error" in html and "Пробный период закончился" in html and BILLING in html,
     )
+    sidebar = (
+        html.split('class="cell-sub">', 1)[1].split("<", 1)[0]
+        if 'class="cell-sub">' in html
+        else ""
+    )
+    check(
+        "в меню под названием — «Пробный период закончился», а не «Пробный период»",
+        sidebar.strip() == "Пробный период закончился",
+        sidebar,
+    )
     html_m = page_as("manager_a@example.com", f"{dash_a}/messages").text
     check("менеджер видит баннер и причину в диалогах", "Пробный период закончился" in html_m)
+    check(
+        "BILLING_CONTACT задан → на обзоре админки предупреждения нет",
+        "Не задан контакт для оплаты" not in page_as("admin@example.com", "/admin", ADMIN_PWD).text,
+    )
     r = c.post(
         f"/businesses/{biz_a}/ai/preview",
         headers=H["owner_a"],

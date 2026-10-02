@@ -9,6 +9,10 @@
   <div class="actions"><a class="btn" href="/admin/companies">Все компании</a></div>
 </header>
 
+{% if billing_contact_missing %}
+  <div class="notice notice--warn" role="alert"><span>Не задан контакт для оплаты (<code>BILLING_CONTACT</code> в настройках сервера): компании с истёкшим сроком видят «напишите в поддержку», но не видят, куда писать.</span></div>
+{% endif %}
+
 <section class="board" aria-label="Компании">
   <div class="board-item">
     <div class="board-value">{{ metrics.companies_total }}</div>

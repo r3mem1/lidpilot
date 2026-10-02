@@ -80,7 +80,10 @@
             </label>
           {% endif %}
           {% if conv.status.value != 'RESOLVED' %}
-            <button class="btn btn--small" type="button" data-api-click data-url="/conversations/{{ conv.id }}/resolve" data-method="POST" data-success="reload">Отметить решённым</button>
+            {# Проверка сайта 2026-10-02: последний вопрос клиента без ответа — не терять молча. #}
+            {% set last_msg = detail.messages[-1] if detail.messages else none %}
+            <button class="btn btn--small" type="button" data-api-click data-url="/conversations/{{ conv.id }}/resolve" data-method="POST" data-success="reload"
+                    {% if last_msg and last_msg.sender_type.value == 'CUSTOMER' %}data-confirm="Последнее сообщение клиента осталось без ответа: «{{ last_msg.text|truncate(80) }}». Ассистент на него уже не ответит. Всё равно отметить решённым?" data-confirm-ok="Отметить решённым"{% endif %}>Отметить решённым</button>
           {% endif %}
         </div>
       </div>

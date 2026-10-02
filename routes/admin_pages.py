@@ -19,6 +19,7 @@ from datetime import UTC, date, datetime, time
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
+from config import settings
 from database import get_db
 from models import BusinessStatus, LogLevel, SubscriptionPlan, User
 from routes.cabinet import LoginRequired, _current_path
@@ -104,6 +105,9 @@ def overview(request: Request, user: User = Depends(page_admin), db: Session = D
         "Обзор платформы",
         metrics=admin_service.get_metrics(db),
         errors=errors,
+        # Проверка сайта 2026-10-02: без контакта баннер «напишите в поддержку»
+        # у компаний с истёкшим сроком ведёт в никуда.
+        billing_contact_missing=not (settings.billing_contact or "").strip(),
         integration_errors=admin_service.integrations_with_errors(db, limit=8),
         expired_trials=admin_service.expired_trials(db, limit=8),
     )

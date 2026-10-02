@@ -67,6 +67,32 @@
   <div class="legend"><span><i class="bar-in-swatch"></i>От клиентов</span><span><i class="bar-ai-swatch"></i>Ответы ассистента</span></div>
 </section>
 
+{% set bk = summary.bookings %}
+{% if bk and (bk.created or bk.by_master or bk.cancelled) %}
+<div class="grid grid--2">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Записи</h2></div>
+    <div class="sheet-body">
+      <dl class="stats">
+        <div><dt>Записались за период</dt><dd>{{ bk.created }}</dd></div>
+        <div><dt>Из них через ассистента</dt><dd>{{ bk.via_bot }}</dd></div>
+        <div><dt>Подтвердили визит кнопкой «Приду»</dt><dd>{{ bk.confirmed_by_client }}</dd></div>
+        <div><dt>Из них отменено</dt><dd>{{ bk.cancelled }}</dd></div>
+      </dl>
+    </div>
+  </section>
+  <section class="sheet">
+    <div class="sheet-head"><h2>Загрузка мастеров</h2><span class="muted">записи за период</span></div>
+    <div class="sheet-body">
+      {% if bk.by_master %}
+        {% set top = bk.by_master[0][1] %}
+        {% for name, count in bk.by_master %}{{ m.meter(name, count, top) }}{% endfor %}
+      {% else %}<p class="muted">За этот период новых записей нет.</p>{% endif %}
+    </div>
+  </section>
+</div>
+{% endif %}
+
 <div class="grid grid--2">
   <section class="sheet">
     <div class="sheet-head"><h2>Лиды по приоритету</h2><span class="muted">Всего: {{ summary.leads_total }}</span></div>

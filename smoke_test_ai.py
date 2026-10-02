@@ -977,6 +977,36 @@ check(
     str([k for k in _BK if k not in _STEPS]),
 )
 
+# Проверка сайта 2026-10-02: услуга, которой нет в прайсе, — сказать прямо.
+from ai.booking import unknown_service  # noqa: E402
+
+price_names = ["Мужская стрижка", "Стрижка бороды"]
+check(
+    "«сколько стоит маникюр?» / «запишите на маникюр» → услуга «маникюр» не из прайса",
+    unknown_service("сколько стоит маникюр?", price_names, ["Иван"]) == "маникюр"
+    and unknown_service("запишите на маникюр завтра", price_names, ["Иван"]) == "маникюр",
+)
+check(
+    "известная услуга, цены, окна, опоздание, перенос — не «неизвестная услуга»",
+    not any(
+        unknown_service(t, price_names, ["Иван"])
+        for t in (
+            "сколько стоит стрижка?",
+            "какие у вас цены?",
+            "какие окна на завтра?",
+            "опоздаю минут на 10",
+            "хочу перенести запись",
+            "запишите к Ивану на бороду завтра в 12",
+        )
+    ),
+)
+res = AIPipeline().process("сколько стоит маникюр?", KNOW_T)
+check(
+    "ответ о цене неизвестной услуги начинается с «Услуги «маникюр» у нас нет»",
+    (res.reply_text or "").startswith("Услуги «маникюр» у нас нет."),
+    str(res.reply_text),
+)
+
 # Проверка сайта 2026-10-02: бессмыслица без модели — сначала переспрос, затем человек.
 from ai.classifier import looks_like_gibberish  # noqa: E402
 from ai.pipeline import REPLY_CLARIFY, REPLY_UNCLEAR_HANDOFF  # noqa: E402
