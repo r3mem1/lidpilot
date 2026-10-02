@@ -1109,6 +1109,9 @@ with TestClient(app) as c:
     # «Какие окна на …» без услуги: все мастера, свободное время = смена минус записи.
     D4 = TODAY + timedelta(days=5)
     d4 = D4.strftime("%d.%m")
+    from ai.booking import _day_phrase  # noqa: E402
+
+    D4_PHRASE = _day_phrase(D4, TODAY)  # «в среду, 07.10» — как в ответах бота
     for m, start, end in ((ivan, "10:00", "16:00"), (petr, "13:00", "20:00")):
         c.post(
             f"/masters/{m}/shifts",
@@ -1453,6 +1456,17 @@ with TestClient(app) as c:
         "Запись отменена" in reply and bookings_of(503)[0]["status"] == "CANCELLED",
         reply,
     )
+    # Проверка сайта 2026-10-02: администратор видит это в очереди, а не старую причину.
+    check(
+        "отмена клиентом → диалог «требует внимания»: «Клиент сам отменил запись в чате»",
+        conv_state(503)["status"] == "NEEDS_ATTENTION"
+        and conv_state(503)["attention_reason"] == "BOOKING_CLIENT_CANCELLED"
+        and "Клиент сам отменил запись в чате"
+        in page_as(
+            "owner_a@example.com", f"/cabinet/{biz_a}/messages?c={conv_state(503)['id']}"
+        ).text,
+        conv_state(503)["attention_reason"],
+    )
     check(
         "в журнале — отмена клиентом",
         bool(
@@ -1494,6 +1508,11 @@ with TestClient(app) as c:
         and b519["status"] == "PENDING",
         reply,
     )
+    check(
+        "перенос клиентом → причина «Клиент сам перенёс запись в чате»",
+        conv_state(519)["attention_reason"] == "BOOKING_CLIENT_MOVED",
+        conv_state(519)["attention_reason"],
+    )
     reply = say(519, f"а можно перенести на {d4} в 16:00?")
     check(
         "занятое время → «занято» и свободные окна мастера, запись не тронута",
@@ -1513,7 +1532,13 @@ with TestClient(app) as c:
         reply,
     )
     reply = say(517, "1")
-    check("выбрал номер → окна для переноса", "Напишите день и время" in reply, reply)
+    check(
+        "выбрал номер → окна для переноса с дня самой записи, а не с сегодняшнего",
+        "Напишите день и время" in reply
+        and f"Свободное время {D4_PHRASE}" in reply
+        and "свободного времени нет" not in reply,
+        reply,
+    )
     reply = say(517, f"{d4} в 14:00")
     moved517 = [
         b
@@ -1522,6 +1547,14 @@ with TestClient(app) as c:
         == datetime.combine(D4, time(14, 0), tzinfo=MSK)
     ]
     check("день и время → перенесено", "перенесли" in reply and len(moved517) == 1, reply)
+    check(
+        "после переноса отметка «Приду» снята — новое время клиент не подтверждал",
+        bool(moved517)
+        and db_rows("SELECT client_confirmed_at FROM bookings WHERE id=?", moved517[0]["id"])[0][
+            "client_confirmed_at"
+        ]
+        is None,
+    )
     colour = c.post(
         f"/businesses/{biz_a}/services",
         headers=H["owner_a"],

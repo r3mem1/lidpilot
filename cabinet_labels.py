@@ -29,6 +29,8 @@ LABELS: dict[str, dict[str, str]] = {
         "BOOKING_PENDING": "Бронь ждёт подтверждения",
         "BOOKING_REJECTED": "Бронь отклонена — предложите другое время",
         "BOOKING_CANCELLED": "Запись отменена",
+        "BOOKING_CLIENT_CANCELLED": "Клиент сам отменил запись в чате",
+        "BOOKING_CLIENT_MOVED": "Клиент сам перенёс запись в чате",
         "HOT_LEAD_CONFIRMATION": "Запись: нужно подтвердить время",
         "COMPLAINT": "Жалоба клиента",
         "MISSING_DATA": "Не хватило данных для ответа",

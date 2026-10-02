@@ -680,6 +680,15 @@ def _run(db: Session, message_id: int) -> None:
         # Бронь поставлена — её должен подтвердить человек (решение заказчика).
         conversation.status = ConversationStatus.NEEDS_ATTENTION
         conversation.attention_reason = "BOOKING_PENDING"
+    # Проверка сайта 2026-10-02: клиент сам отменил/перенёс запись в чате —
+    # администратор видит это в очереди, а не устаревшую причину.
+    client_change = {
+        BookingKind.CANCELLED: "BOOKING_CLIENT_CANCELLED",
+        BookingKind.MOVED: "BOOKING_CLIENT_MOVED",
+    }
+    if result.booking is not None and result.booking.kind in client_change:
+        conversation.status = ConversationStatus.NEEDS_ATTENTION
+        conversation.attention_reason = client_change[result.booking.kind]
 
     outgoing: Message | None = None
     if reply_text:

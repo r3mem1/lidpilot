@@ -103,6 +103,11 @@ class FakeTelegram(BaseHTTPRequestHandler):
                     {
                         "chat_id": str(payload.get("chat_id")),
                         "text": payload.get("text"),
+                        "buttons": [
+                            btn.get("text")
+                            for row in (payload.get("reply_markup") or {}).get("keyboard", [])
+                            for btn in row
+                        ],
                         "at": time.strftime("%H:%M:%S"),
                     }
                 )
@@ -182,7 +187,9 @@ def inbox(chat_id: str | None, since: int = 0) -> None:
     if not rows:
         print("(клиенту ничего не отправлено)")
     for m in rows:
-        print(f"[{m['at']}] → {m['chat_id']}:\n{m['text']}\n")
+        buttons = "".join(f" [ {b} ]" for b in m.get("buttons") or [])
+        print(f"[{m['at']}] → {m['chat_id']}:\n{m['text']}")
+        print(f"кнопки:{buttons}\n" if buttons else "")
 
 
 if __name__ == "__main__":

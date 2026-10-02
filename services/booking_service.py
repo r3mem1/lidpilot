@@ -589,9 +589,11 @@ def _move(
     booking.master_id = master.id
     booking.starts_at = starts_at
     booking.ends_at = ends_at
-    # Новое время — напоминания клиенту отправятся заново.
+    # Новое время — напоминания клиенту отправятся заново, а «Приду» относилось
+    # к старому времени (проверка сайта 2026-10-02).
     booking.reminded_day_at = None
     booking.reminded_soon_at = None
+    booking.client_confirmed_at = None
     if not by_client:
         booking.status = BookingStatus.CONFIRMED
         booking.decided_by_user_id = actor_user_id

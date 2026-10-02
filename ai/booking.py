@@ -988,9 +988,15 @@ class BookingEngine:
                 f"К сожалению, {format_when(datetime.combine(day, request.at), today)} занято. "
             )
             request = replace(request, day=day, at=None)
+        # День не назван — окна с дня самой записи (проверка сайта 2026-10-02: клиент,
+        # переносящий запись на воскресенье, ждёт воскресных окон, а не сегодняшних).
         found = self._windows(
             provider,
-            BookingRequest(master_id=master_id, day=request.day, part_of_day=request.part_of_day),
+            BookingRequest(
+                master_id=master_id,
+                day=request.day or max(target.local_start.date(), today),
+                part_of_day=request.part_of_day,
+            ),
             target.service_id,
             None,
             source,
