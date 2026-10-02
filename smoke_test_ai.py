@@ -977,6 +977,50 @@ check(
     str([k for k in _BK if k not in _STEPS]),
 )
 
+# Проверка сайта 2026-10-02: бессмыслица без модели — сначала переспрос, затем человек.
+from ai.classifier import looks_like_gibberish  # noqa: E402
+from ai.pipeline import REPLY_CLARIFY, REPLY_UNCLEAR_HANDOFF  # noqa: E402
+
+gibberish = ["ааа ыыы", "ыыы", "ммм", "фывапр", "вфпр", "йцукен", "абаба", "ахаха"]
+meaningful = [
+    "Олег", "спасибо", "ок", "ага", "Анна", "мама", "привет", "хм", "Иван Петров",
+    "у вас есть парковка?", "мск", "thx", "взгляд", "встреч", "89001234567", ")))",
+]  # fmt: skip
+check(
+    "набор букв распознаётся как бессмыслица",
+    all(looks_like_gibberish(t) for t in gibberish),
+    str([t for t in gibberish if not looks_like_gibberish(t)]),
+)
+check(
+    "имена, «ага», «ок», сокращения, вопросы и настоящие слова — не бессмыслица",
+    not any(looks_like_gibberish(t) for t in meaningful),
+    str([t for t in meaningful if looks_like_gibberish(t)]),
+)
+first = AIPipeline().process("ааа ыыы", KNOW_T)
+check(
+    "бессмыслица без модели → переспрос, а не «точной информации нет»",
+    first.escalation_reason is EscalationReason.AMBIGUOUS_REQUEST
+    and first.safe_reply == REPLY_CLARIFY,
+    str(first.safe_reply),
+)
+second = AIPipeline().process(
+    "ыыы",
+    KNOW_T,
+    [
+        HistoryTurn(role=HistoryRole.CUSTOMER, text="ааа ыыы"),
+        HistoryTurn(role=HistoryRole.AI, text=REPLY_CLARIFY),
+    ],
+)
+check(
+    "повторная бессмыслица после переспроса → «передаю администратору»",
+    second.safe_reply == REPLY_UNCLEAR_HANDOFF,
+    str(second.safe_reply),
+)
+check(
+    "обычный вопрос без ответа в данных — по-прежнему администратору, без переспроса",
+    AIPipeline().process("у вас есть парковка?", KNOW_T).safe_reply != REPLY_CLARIFY,
+)
+
 # Проверка сайта 2026-10-01: запись без слова «запись» (правила, без модели).
 res = AIPipeline().process("давайте завтра в 12 на стрижку", KNOW_T)
 check(

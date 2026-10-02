@@ -61,7 +61,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head                   # миграции; новая: alembic revision --autogenerate -m "..."
 uvicorn main:app --reload              # http://127.0.0.1:8000/docs
 python smoke_test.py                   # 80 проверок этапа 1
-python smoke_test_ai.py                # 175 проверок этапа 2
+python smoke_test_ai.py                # 180 проверок этапа 2
 python smoke_test_stage3.py            # 149 проверок этапа 3 (+ серия сообщений, контроль ответа)
 python smoke_test_stage4.py            # 121 проверка этапа 4
 python smoke_test_stage5.py            # 182 проверки этапа 5

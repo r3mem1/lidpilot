@@ -262,12 +262,52 @@ def classify_by_rules(text: str) -> Classification:
             reason="Правила: общий вопрос клиента",
         )
 
+    if looks_like_gibberish(normalized):
+        # Решение 2026-09-27 и проверка сайта 2026-10-02: бессмыслица без модели —
+        # сначала переспрос, а не «точной информации нет» (как при unclear от LLM).
+        return Classification(
+            intent=Intent.OTHER,
+            priority=Priority.COLD,
+            needs_manager=False,
+            reason="Правила: сообщение без смысла (набор букв)",
+            unclear=True,
+        )
+
     return Classification(
         intent=Intent.OTHER,
         priority=Priority.COLD,
         needs_manager=False,
         reason="Правила: явное намерение не определено",
     )
+
+
+_VOWELS = set("аеёиоуыэюяaeiouy")
+_CONSONANT_RUN_RE = re.compile(r"[бвгджзйклмнпрстфхцчшщbcdfghjklmnpqrstvwxz]{5,}")
+_KEYBOARD_RE = re.compile(r"фыва|ывап|вапр|йцук|цуке|укен|ячсм|олдж|пролд|asdf|qwer|zxcv")
+
+
+def _junk_word(word: str) -> bool:
+    if re.search(r"(.)\1\1", word):  # «ыыы», «ммм», «ааааа»
+        return True
+    # «абаба», «ахаха»; короче 5 букв — нет: «ага», «Анна», «мама» — настоящие слова.
+    if len(word) >= 5 and len(set(word)) <= 2:
+        return True
+    vowels = sum(ch in _VOWELS for ch in word)
+    if len(word) >= 4 and vowels == 0:  # «вфпр»; «мск», «спб», «thx» — сокращения
+        return True
+    # Доля гласных не годится: «взгляд», «встреч» — настоящие слова. Только цепочки
+    # из 5+ согласных подряд и куски клавиатуры.
+    return bool(_CONSONANT_RUN_RE.search(word) or _KEYBOARD_RE.search(word))
+
+
+def looks_like_gibberish(text: str) -> bool:
+    """Набор букв без смысла («ааа ыыы», «фывапр»): каждое слово «мусорное».
+    Осторожно: вопрос, цифры и фразы длиннее пяти слов бессмыслицей не считаются."""
+    lowered = (text or "").lower()
+    if "?" in lowered or re.search(r"\d", lowered):
+        return False
+    words = re.findall(r"[а-яёa-z]+", lowered)
+    return bool(words) and len(words) <= 5 and all(_junk_word(w) for w in words)
 
 
 # --------------------------------------------------------------------------- #
