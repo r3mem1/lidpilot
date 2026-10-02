@@ -57,6 +57,18 @@ class BookableService:
     name: str
 
 
+@dataclass(frozen=True)
+class ClientBooking:
+    """Предстоящая активная запись клиента этого диалога (из БД)."""
+
+    id: int
+    service_id: int | None
+    service_name: str
+    master_id: int
+    master_name: str
+    local_start: datetime  # в поясе компании
+
+
 class ScheduleProvider(Protocol):
     """Расписание одной компании для одного диалога (данные только этой компании)."""
 
@@ -104,6 +116,26 @@ class ScheduleProvider(Protocol):
         вопрос об услуге; иначе None."""
         ...
 
+    # -- запись клиента: отмена и перенос в чате (решение 2026-10-01) -------- #
+    def client_bookings(self) -> list[ClientBooking]:
+        """Предстоящие активные записи клиента этого диалога, ближайшие первыми."""
+        ...
+
+    def last_change(
+        self,
+    ) -> tuple[BookingKind, str, int | None, list[int], date | None] | None:
+        """(шаг, действие cancel|move, запись, записи по номерам, день показанных
+        окон), если последний ответ AI — шаг отмены или переноса; иначе None."""
+        ...
+
+    def cancel_booking(self, booking_id: int) -> bool:
+        """Отменить запись клиента; False — уже нельзя."""
+        ...
+
+    def move_booking(self, booking_id: int, master_id: int, day: date, at: time) -> bool:
+        """Перенести запись клиента; False — время занято или вне смены."""
+        ...
+
 
 # --------------------------------------------------------------------------- #
 # Итог
@@ -114,6 +146,13 @@ class BookingKind(str, enum.Enum):
     ASK_SERVICE = "ASK_SERVICE"  # уточняем услугу
     WINDOWS = "WINDOWS"  # названы свободные интервалы мастеров на день
     NO_SLOTS = "NO_SLOTS"  # свободного времени нет — нужен менеджер
+    # Запись клиента в чате (решение 2026-10-01).
+    CHANGE_CHOOSE = "CHANGE_CHOOSE"  # у клиента несколько записей — какую?
+    CANCEL_ASK = "CANCEL_ASK"  # «Отменить запись …? Ответьте «да»»
+    CANCELLED = "CANCELLED"  # клиент отменил запись
+    KEPT = "KEPT"  # клиент передумал отменять
+    MOVE_ASK = "MOVE_ASK"  # на какое время перенести (показаны окна)
+    MOVED = "MOVED"  # запись перенесена
 
 
 @dataclass(frozen=True)
@@ -131,12 +170,23 @@ class BookingOutcome:
     context: BookingRequest | None = None
     # ASK_SERVICE: услуги в порядке номеров в вопросе — ответ «1» выбирает первую.
     service_options: tuple[int, ...] = ()
+    # Отмена/перенос записи клиентом: действие, запись, записи по номерам.
+    change_action: str | None = None  # cancel | move
+    change_booking_id: int | None = None
+    change_options: tuple[int, ...] = ()
 
     def as_dict(self) -> dict:
         ctx = self.context
         return {
             "kind": self.kind.value,
             "service_options": list(self.service_options),
+            "change": {
+                "action": self.change_action,
+                "booking_id": self.change_booking_id,
+                "options": list(self.change_options),
+            }
+            if self.change_action
+            else None,
             "context": {
                 "service_id": ctx.service_id,
                 "master_id": ctx.master_id,
@@ -264,6 +314,28 @@ _WINDOWS_RE = re.compile(
 
 
 _NUMBER_ONLY_RE = re.compile(r"\s*(\d{1,2})\s*[.!)]?\s*")
+
+
+# Клиент отменяет или переносит свою запись (решение 2026-10-01).
+_MOVE_WORDS_RE = re.compile(
+    r"перенес|перенос|сдвин|другое время|другой день|поменя\w*\s+врем|измени\w*\s+врем",
+    re.IGNORECASE,
+)
+_CANCEL_WORDS_RE = re.compile(
+    r"отмен|не приду|не смогу\s+прийти|не получится\s+прийти|не успеваю", re.IGNORECASE
+)
+_NO_RE = re.compile(
+    r"^\s*(?:нет|не надо|не нужно|не отменя\w*|оставьте|оставь|передумал\w*)\b", re.IGNORECASE
+)
+
+
+def change_action(text: str) -> str | None:
+    """«move» — перенести запись, «cancel» — отменить, None — не об этом."""
+    if _MOVE_WORDS_RE.search(text):
+        return "move"
+    if _CANCEL_WORDS_RE.search(text):
+        return "cancel"
+    return None
 
 
 def is_windows_question(text: str) -> bool:
@@ -579,6 +651,14 @@ def _pick_from_offer(request: BookingRequest, offered: list[SlotOption]) -> list
     return picked
 
 
+def _describe(booking: ClientBooking, today: date) -> str:
+    """«Мужская стрижка» у мастера Иван, завтра в 12:00."""
+    return (
+        f"«{booking.service_name}» у мастера {booking.master_name}, "
+        f"{format_when(booking.local_start, today)}"
+    )
+
+
 def _capitalize(text: str) -> str:
     return text[:1].upper() + text[1:]
 
@@ -623,6 +703,10 @@ class BookingEngine:
         address: str | None = None,
     ) -> BookingOutcome:
         request, source = self.extract(text, history, provider)
+        # Решение 2026-10-01: клиент сам отменяет или переносит свою запись.
+        change = self._handle_change(text, request, provider, source)
+        if change is not None:
+            return change
         services = provider.services()
         names = {s.id: s.name for s in services}
         offer_service, offered = provider.last_offer()
@@ -760,6 +844,149 @@ class BookingEngine:
             )
         return self._offer(
             service_id, service_name, _pick_times(slots), today, source, prefix, master_name
+        )
+
+    # ------------------------------------------------------------------ #
+    # Отмена и перенос своей записи клиентом (решение заказчика 2026-10-01)
+    # ------------------------------------------------------------------ #
+    def _handle_change(
+        self,
+        text: str,
+        request: BookingRequest,
+        provider: ScheduleProvider,
+        source: str,
+    ) -> BookingOutcome | None:
+        """None — сообщение не об отмене/переносе (дальше — обычная запись)."""
+        today = provider.today
+        bookings = provider.client_bookings()
+        by_id = {b.id: b for b in bookings}
+        last = provider.last_change()
+        number = _NUMBER_ONLY_RE.fullmatch(text)
+        index = int(number.group(1)) if number else request.choice
+
+        if last is not None:
+            kind, action, booking_id, options, shown_day = last
+            target = by_id.get(booking_id or 0)
+            if kind is BookingKind.CHANGE_CHOOSE and index and 1 <= index <= len(options):
+                chosen = by_id.get(options[index - 1])
+                if chosen is not None:
+                    if action == "cancel":
+                        return self._cancel(provider, chosen, source)
+                    return self._move(provider, chosen, request, source, shown_day=None)
+            if kind is BookingKind.CANCEL_ASK and target is not None:
+                if _NO_RE.search(text):
+                    return BookingOutcome(
+                        kind=BookingKind.KEPT,
+                        reply=f"Хорошо, запись остаётся: {_describe(target, today)}. Ждём вас!",
+                        source=source,
+                    )
+                if request.agree:
+                    return self._cancel(provider, target, source)
+            if (
+                kind is BookingKind.MOVE_ASK
+                and target is not None
+                and (request.at is not None or request.day is not None)
+            ):
+                return self._move(provider, target, request, source, shown_day=shown_day)
+
+        action = change_action(text)
+        if action is None or not bookings:
+            return None
+        if len(bookings) > 1:
+            lines = "\n".join(f"{i}) {_describe(b, today)}" for i, b in enumerate(bookings, 1))
+            verb = "отменить" if action == "cancel" else "перенести"
+            return BookingOutcome(
+                kind=BookingKind.CHANGE_CHOOSE,
+                reply=f"Какую запись {verb}?\n{lines}\nНапишите номер.",
+                source=source,
+                change_action=action,
+                change_options=tuple(b.id for b in bookings),
+            )
+        target = bookings[0]
+        if action == "cancel":
+            return BookingOutcome(
+                kind=BookingKind.CANCEL_ASK,
+                reply=(
+                    f"Отменить запись: {_describe(target, today)}? "
+                    "Ответьте «да» — отменю, или «нет» — оставлю."
+                ),
+                source=source,
+                change_action="cancel",
+                change_booking_id=target.id,
+            )
+        return self._move(provider, target, request, source, shown_day=None)
+
+    @staticmethod
+    def _cancel(provider: ScheduleProvider, target: ClientBooking, source: str) -> BookingOutcome:
+        if not provider.cancel_booking(target.id):
+            return BookingOutcome(kind=BookingKind.NO_SLOTS, reply=None, source=source)
+        return BookingOutcome(
+            kind=BookingKind.CANCELLED,
+            reply=(
+                f"Запись отменена: {_describe(target, provider.today)}. "
+                "Будем рады видеть вас снова — напишите, когда захотите записаться."
+            ),
+            source=source,
+            change_action="cancel",
+            change_booking_id=target.id,
+        )
+
+    def _move(
+        self,
+        provider: ScheduleProvider,
+        target: ClientBooking,
+        request: BookingRequest,
+        source: str,
+        *,
+        shown_day: date | None,
+    ) -> BookingOutcome:
+        """Новое время названо — переносим, если свободно; иначе показываем окна
+        того же мастера на услугу и ждём время (MOVE_ASK)."""
+        today = provider.today
+        master_id = request.master_id or target.master_id
+        prefix = ""
+        if request.at is not None:
+            day = request.day or shown_day or target.local_start.date()
+            if provider.move_booking(target.id, master_id, day, request.at):
+                moved = replace(
+                    target,
+                    master_id=master_id,
+                    master_name=dict(provider.masters()).get(master_id, target.master_name),
+                    local_start=datetime.combine(day, request.at),
+                )
+                return BookingOutcome(
+                    kind=BookingKind.MOVED,
+                    reply=f"Готово, перенесли: {_describe(moved, today)}. Ждём вас!",
+                    source=source,
+                    change_action="move",
+                    change_booking_id=target.id,
+                )
+            prefix = (
+                f"К сожалению, {format_when(datetime.combine(day, request.at), today)} занято. "
+            )
+            request = replace(request, day=day, at=None)
+        found = self._windows(
+            provider,
+            BookingRequest(master_id=master_id, day=request.day, part_of_day=request.part_of_day),
+            target.service_id,
+            None,
+            source,
+        )
+        if found.kind is BookingKind.NO_SLOTS or not found.reply:
+            return BookingOutcome(kind=BookingKind.NO_SLOTS, reply=None, source=source)
+        lines = found.reply.split("\n")[:-1]  # без «Напишите удобное время, мастера…»
+        reply = (
+            f"{prefix}Перенесём {_describe(target, today)}.\n"
+            + "\n".join(lines)
+            + "\nНапишите день и время — перенесу."
+        )
+        return BookingOutcome(
+            kind=BookingKind.MOVE_ASK,
+            reply=reply,
+            source=source,
+            change_action="move",
+            change_booking_id=target.id,
+            context=found.context,
         )
 
     @staticmethod

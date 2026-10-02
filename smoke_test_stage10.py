@@ -147,6 +147,24 @@ with TestClient(app) as c:
     HA = bearer("admin@example.com", "Adm1n-Pass-123!")
     biz_a = c.post("/businesses", headers=H["owner_a"], json={"name": "Бритва"}).json()["id"]
     biz_b = c.post("/businesses", headers=H["owner_b"], json={"name": "Лилия"}).json()["id"]
+    # Решение 2026-10-01: часовой пояс выбирается сразу при создании компании.
+    r = c.post(
+        "/businesses",
+        headers=H["owner_b"],
+        json={"name": "Екб", "timezone": "Asia/Yekaterinburg"},
+    )
+    check(
+        "пояс при создании компании сохраняется",
+        r.status_code == 201 and r.json()["timezone"] == "Asia/Yekaterinburg",
+        r.text,
+    )
+    check(
+        "неизвестный пояс при создании — 422",
+        c.post(
+            "/businesses", headers=H["owner_b"], json={"name": "X", "timezone": "Mars/Base"}
+        ).status_code
+        == 422,
+    )
     cut = c.post(
         f"/businesses/{biz_a}/services",
         headers=H["owner_a"],
@@ -394,6 +412,87 @@ with TestClient(app) as c:
             params={"date_from": iso(D1), "date_to": iso(D1 + timedelta(days=90))},
         ).status_code
         == 422,
+    )
+
+    # Шаблон смен (решение 2026-10-01): «пн–пт 10–20» на период одним действием.
+    F0 = TODAY + timedelta(days=60)
+    F1 = F0 + timedelta(days=13)
+    weekdays_in = sum(1 for i in range(14) if (F0 + timedelta(days=i)).weekday() < 5)
+    fill = {
+        "date_from": iso(F0),
+        "date_to": iso(F1),
+        "weekdays": [0, 1, 2, 3, 4],
+        "start_time": "10:00",
+        "end_time": "20:00",
+    }
+    r = c.post(f"/masters/{anna}/shifts/fill", headers=H["owner_a"], json=fill)
+    check(
+        "пн–пт за две недели → смены на все будни",
+        r.status_code == 200 and r.json() == {"created": weekdays_in, "skipped": 0},
+        r.text,
+    )
+    r = c.post(f"/masters/{anna}/shifts/fill", headers=H["owner_a"], json=fill)
+    check(
+        "повтор того же шаблона — ничего не дублируется",
+        r.json() == {"created": 0, "skipped": weekdays_in},
+        r.text,
+    )
+    check(
+        "мастер не заполняет чужое расписание (403)",
+        c.post(f"/masters/{petr}/shifts/fill", headers=H["master_ivan"], json=fill).status_code
+        == 403,
+    )
+    check(
+        "пустые дни недели и слишком длинный период — 422",
+        c.post(
+            f"/masters/{anna}/shifts/fill", headers=H["owner_a"], json={**fill, "weekdays": []}
+        ).status_code
+        == 422
+        and c.post(
+            f"/masters/{anna}/shifts/fill",
+            headers=H["owner_a"],
+            json={**fill, "date_to": iso(F0 + timedelta(days=90))},
+        ).status_code
+        == 422,
+    )
+    r = c.post(
+        f"/businesses/{biz_a}/shifts/copy-week",
+        headers=H["owner_a"],
+        json={"week": iso(F1 + timedelta(days=1)), "weeks": 1},
+    )
+    check("копировать пустую неделю — 0 смен", r.json() == {"created": 0, "skipped": 0}, r.text)
+    week_of_f0 = F0 - timedelta(days=F0.weekday())
+    source_count = len(
+        [
+            s
+            for s in c.get(
+                f"/businesses/{biz_a}/shifts",
+                headers=H["owner_a"],
+                params={
+                    "date_from": iso(week_of_f0),
+                    "date_to": iso(week_of_f0 + timedelta(days=6)),
+                },
+            ).json()
+        ]
+    )
+    r = c.post(
+        f"/businesses/{biz_a}/shifts/copy-week",
+        headers=H["owner_a"],
+        json={"week": iso(F0), "weeks": 1},
+    )
+    check(
+        "неделя копируется на следующую (уже заполненные дни пропускаются)",
+        r.status_code == 200 and r.json()["created"] + r.json()["skipped"] == source_count,
+        f"{r.text} из {source_count}",
+    )
+    check(
+        "чужая компания копировать не может (404)",
+        c.post(
+            f"/businesses/{biz_a}/shifts/copy-week",
+            headers=H["owner_b"],
+            json={"week": iso(F0), "weeks": 1},
+        ).status_code
+        == 404,
     )
 
     # ----------------------------------------------------------------------- #
@@ -768,6 +867,10 @@ with TestClient(app) as c:
         and "11:00" in html
         and "Записать клиента" in html,
     )
+    check(
+        "форма записи знает услуги мастера (Пётр — только борода) для фильтра списка",
+        f'value="{petr}" data-services="{beard}"' in html,
+    )
     html = page_as(
         "master_ivan@example.com", f"/cabinet/{biz_a}/bookings?from={D1.isoformat()}"
     ).text
@@ -1106,6 +1209,185 @@ with TestClient(app) as c:
         f"{[dict(b) for b in b516]} {reply}",
     )
 
+    # Решение заказчика 2026-10-01: при записи собрать минимум имя и телефон.
+    def customer_of(chat: int) -> sqlite3.Row:
+        return db_rows(
+            "SELECT id, name, contact_name, phone FROM customers WHERE external_id = ?", str(chat)
+        )[0]
+
+    reply = say(517, f"запишите на стрижку {d4} в 13:00 к Ивану")
+    check(
+        "бронь без телефона → «вы записаны» и просьба оставить имя и номер",
+        "вы записаны" in reply and "имя и номер телефона" in reply,
+        reply,
+    )
+    reply = say(517, "Олег, 8 (900) 123-45-67")
+    person = customer_of(517)
+    check(
+        "ответ «Олег, 8 (900) 123-45-67» → номер в карточке +7…, имя — как назвался",
+        person["phone"] == "+79001234567"
+        and person["contact_name"] == "Олег"
+        and "Спасибо, Олег" in reply
+        and "+7 900 123-45-67" in reply,
+        f"{dict(person)} {reply}",
+    )
+    check(
+        "имя попало и в запись (видно мастеру и администратору)",
+        bookings_of(517)[0]["id"]
+        and db_rows("SELECT client_name FROM bookings WHERE id=?", bookings_of(517)[0]["id"])[0][
+            "client_name"
+        ]
+        == "Олег",
+    )
+    reply = say(517, f"и на бороду {d4} в 14:30 к Петру")
+    check(
+        "телефон уже известен → при следующей записи контакты не спрашиваем",
+        "вы записаны" in reply and "номер телефона" not in reply,
+        reply,
+    )
+    reply = say(518, f"запишите на стрижку {d4} в 11:00 к Ивану, мой номер 89005556677")
+    check(
+        "номер в той же просьбе → сохранён, повторно не спрашиваем",
+        customer_of(518)["phone"] == "+79005556677"
+        and "вы записаны" in reply
+        and "номер телефона" not in reply,
+        reply,
+    )
+    say(519, f"запишите на бороду {d4} в 17:00 к Петру")
+    reply = say(519, "Анна")
+    check(
+        "ответили только именем → имя сохранено, просим номер",
+        customer_of(519)["contact_name"] == "Анна" and "номер телефона" in reply,
+        reply,
+    )
+    say(519, "+7 912 000 11 22")
+    check("затем номер → сохранён", customer_of(519)["phone"] == "+79120001122")
+    check(
+        "в журнале — факт сохранения контактов без самого номера",
+        all(
+            "9001234567" not in (r["metadata"] or "")
+            for r in db_rows(
+                "SELECT metadata FROM system_logs WHERE event_type='CUSTOMER_CONTACT_SAVED'"
+            )
+        )
+        and bool(db_rows("SELECT id FROM system_logs WHERE event_type='CUSTOMER_CONTACT_SAVED'")),
+    )
+
+    # Карточка клиента в кабинете: правка, права, поиск по телефону, телефон в записях.
+    oleg = customer_of(517)["id"]
+    r = c.patch(
+        f"/customers/{oleg}",
+        headers=H["manager_a"],
+        json={"phone": "8 900 765 43 21", "notes": "Любит короткие виски"},
+    )
+    check(
+        "менеджер правит карточку: телефон приводится к +7…, имя не тронуто",
+        r.status_code == 200
+        and r.json()["phone"] == "+79007654321"
+        and r.json()["notes"] == "Любит короткие виски"
+        and r.json()["contact_name"] == "Олег",
+        r.text,
+    )
+    check(
+        "непохожий на номер телефон — 422",
+        c.patch(f"/customers/{oleg}", headers=H["manager_a"], json={"phone": "12-34"}).status_code
+        == 422,
+    )
+    check(
+        "мастер карточку не правит (403)",
+        c.patch(f"/customers/{oleg}", headers=H["master_ivan"], json={"notes": "x"}).status_code
+        == 403,
+    )
+    check(
+        "чужая компания — 404",
+        c.patch(f"/customers/{oleg}", headers=H["owner_b"], json={"notes": "x"}).status_code == 404,
+    )
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/customers/{oleg}").text
+    check(
+        "карточка клиента: имя, телефон, заметка и записи",
+        "Олег" in html
+        and "+7 900 765-43-21" in html
+        and "Любит короткие виски" in html
+        and "Предстоящих записей нет" not in html,
+    )
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/customers?q=89007654321").text
+    check("поиск клиента по телефону («8…» = «+7…»)", f"/customers/{oleg}" in html)
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/bookings?from={iso(D4)}").text
+    check("в «Записях» рядом с клиентом — его телефон", "+7 900 765-43-21" in html)
+    html = page_as("owner_a@example.com", f"/cabinet/{biz_a}/settings").text
+    check(
+        "настройки: ссылка на бота для клиентов с кнопкой «Скопировать», webhook — в деталях",
+        'href="https://t.me/' in html and "data-copy=" in html and "<details" in html,
+    )
+    html = page_as(
+        "manager_a@example.com", f"/cabinet/{biz_a}/messages?c={conv_state(517)['id']}"
+    ).text
+    check(
+        "окно переписки: телефон и ближайшие записи клиента с «Перенести» и «Отменить»",
+        "+7 900 765-43-21" in html
+        and "Записи клиента" in html
+        and 'id="reschedule-dialog"' in html
+        and "data-reschedule=" in html,
+    )
+
+    # Напоминания о записи (решение 2026-10-01): за сутки и за 2 часа, без дублей.
+    from database import SessionLocal  # noqa: E402
+    from services import reminder_service  # noqa: E402
+
+    def remind(at: datetime) -> int:
+        with SessionLocal() as session:
+            return reminder_service.send_due(session, now=at)
+
+    def run_sql(sql: str, *params) -> None:
+        with sqlite3.connect(DB) as raw:
+            raw.execute(sql, params)
+
+    b517 = bookings_of(517)[0]
+    start517 = datetime.fromisoformat(b517["starts_at"]).replace(tzinfo=UTC)
+    # Остальные записи в окне не мешают проверке: отмечаем их как уже напомненные.
+    run_sql(
+        "UPDATE bookings SET reminded_day_at = ?, reminded_soon_at = ? WHERE id != ?",
+        "2000-01-01 00:00:00",
+        "2000-01-01 00:00:00",
+        b517["id"],
+    )
+    before = len(fake.sent(517))
+    sent = remind(start517 - timedelta(hours=23))
+    day_msgs = [m["text"] for m in fake.sent(517)[before:]]
+    check(
+        "за сутки: «Напоминаем: … вы записаны» с услугой, мастером и адресом",
+        sent == 1 and len(day_msgs) == 1 and "Напоминаем" in day_msgs[0] and "Иван" in day_msgs[0],
+        f"{sent} {day_msgs}",
+    )
+    check(
+        "повторный проход — без дубля",
+        remind(start517 - timedelta(hours=22)) == 0 and len(fake.sent(517)) == before + 1,
+    )
+    sent = remind(start517 - timedelta(hours=1))
+    check(
+        "за 2 часа: «Ждём вас …»",
+        sent == 1 and "Ждём вас" in fake.sent(517)[-1]["text"],
+        fake.sent(517)[-1]["text"],
+    )
+    # Свежая запись (сделана меньше чем за 12 ч) — «за сутки» не напоминаем.
+    run_sql(
+        "UPDATE bookings SET reminded_day_at = NULL, reminded_soon_at = NULL, created_at = ? "
+        "WHERE id = ?",
+        (start517 - timedelta(hours=10)).strftime("%Y-%m-%d %H:%M:%S"),
+        b517["id"],
+    )
+    check(
+        "запись сделана за 10 ч до визита — напоминания «за сутки» нет",
+        remind(start517 - timedelta(hours=8)) == 0,
+    )
+    c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"reminders_enabled": False})
+    check(
+        "владелец выключил напоминания — не отправляются",
+        remind(start517 - timedelta(hours=1)) == 0,
+    )
+    c.put(f"/businesses/{biz_a}", headers=H["owner_a"], json={"reminders_enabled": True})
+    run_sql("UPDATE bookings SET reminded_day_at = NULL, reminded_soon_at = NULL")
+
     reply = say(504, "Ужасно подстригли в прошлый раз, запишите на исправление")
     check(
         "жалоба с «запишите» → менеджер, без брони",
@@ -1117,32 +1399,97 @@ with TestClient(app) as c:
         not bookings_of(505) and conv_state(505)["attention_reason"] == "ACTION_NOT_ALLOWED",
     )
 
+    # Решение 2026-10-01: клиент сам отменяет свою запись в чате — с подтверждением.
     reply = say(503, "Хочу отменить запись, не смогу прийти")
     check(
-        "просьба отменить запись → менеджеру, без новых броней и окон",
-        len(bookings_of(503)) == 1
-        and conv_state(503)["status"] == "NEEDS_ATTENTION"
-        and not re.search(r"\d{1,2}:\d{2}", reply),
+        "«хочу отменить запись» → бот называет запись и просит подтвердить, запись на месте",
+        "Отменить запись" in reply
+        and "«да»" in reply
+        and bookings_of(503)[0]["status"] in ("PENDING", "CONFIRMED"),
+        reply,
+    )
+    reply = say(503, "нет")
+    check(
+        "«нет» → запись остаётся",
+        "запись остаётся" in reply and bookings_of(503)[0]["status"] in ("PENDING", "CONFIRMED"),
+        reply,
+    )
+    say(503, "всё-таки отмените запись")
+    reply = say(503, "да")
+    check(
+        "«да» → запись отменена, клиенту — подтверждение",
+        "Запись отменена" in reply and bookings_of(503)[0]["status"] == "CANCELLED",
         reply,
     )
     check(
-        "причина — «перенести или отменить запись», а не «нужно подтвердить время»",
-        conv_state(503)["attention_reason"] == "BOOKING_CHANGE",
-        conv_state(503)["attention_reason"],
+        "в журнале — отмена клиентом",
+        bool(
+            db_rows(
+                "SELECT id FROM system_logs WHERE event_type='BOOKING_CANCELLED' "
+                "AND message LIKE '%отменил клиент%'"
+            )
+        ),
     )
-    for path in ("/leads", "", f"/messages?c={conv_state(503)['id']}"):
+    # Записи в системе нет (записывали по телефону) — как раньше, решает администратор.
+    reply = say(520, "Хочу перенести запись на пятницу")
+    check(
+        "нет записи в системе → администратору, причина «перенести или отменить запись»",
+        conv_state(520)["attention_reason"] == "BOOKING_CHANGE",
+        conv_state(520)["attention_reason"],
+    )
+    for path in ("/leads", "", f"/messages?c={conv_state(520)['id']}"):
         html = page_as("owner_a@example.com", f"/cabinet/{biz_a}{path}").text
         codes = set(re.findall(r"\b(WINDOWS|ASK_SERVICE|OFFER|NO_SLOTS|HOLD)\b", html))
         check(
             f"кабинет{path or ' (обзор)'}: без служебных кодов шага записи", not codes, str(codes)
         )
     html = page_as(
-        "owner_a@example.com", f"/cabinet/{biz_a}/messages?c={conv_state(503)['id']}"
+        "owner_a@example.com", f"/cabinet/{biz_a}/messages?c={conv_state(520)['id']}"
     ).text
     check(
         "в диалоге причина по-русски",
         "Клиент просит перенести или отменить запись" in html,
     )
+
+    # Перенос клиентом: время названо и свободно — сразу; занято — окна того же мастера.
+    reply = say(519, f"перенесите мою запись на {d4} в 18:00")
+    b519 = bookings_of(519)[0]
+    check(
+        "«перенесите на <дату> в 18:00» → перенесено, статус брони не меняется",
+        "перенесли" in reply
+        and datetime.fromisoformat(b519["starts_at"]).replace(tzinfo=UTC).astimezone(MSK)
+        == datetime.combine(D4, time(18, 0), tzinfo=MSK)
+        and b519["status"] == "PENDING",
+        reply,
+    )
+    reply = say(519, f"а можно перенести на {d4} в 16:00?")
+    check(
+        "занятое время → «занято» и свободные окна мастера, запись не тронута",
+        "занято" in reply
+        and "Пётр —" in reply
+        and datetime.fromisoformat(bookings_of(519)[0]["starts_at"])
+        .replace(tzinfo=UTC)
+        .astimezone(MSK)
+        .hour
+        == 18,
+        reply,
+    )
+    reply = say(517, "нужно перенести запись")
+    check(
+        "у клиента две записи → «Какую запись перенести?» с номерами",
+        "Какую запись перенести" in reply and "1)" in reply and "2)" in reply,
+        reply,
+    )
+    reply = say(517, "1")
+    check("выбрал номер → окна для переноса", "Напишите день и время" in reply, reply)
+    reply = say(517, f"{d4} в 14:00")
+    moved517 = [
+        b
+        for b in bookings_of(517)
+        if datetime.fromisoformat(b["starts_at"]).replace(tzinfo=UTC).astimezone(MSK)
+        == datetime.combine(D4, time(14, 0), tzinfo=MSK)
+    ]
+    check("день и время → перенесено", "перенесли" in reply and len(moved517) == 1, reply)
     colour = c.post(
         f"/businesses/{biz_a}/services",
         headers=H["owner_a"],

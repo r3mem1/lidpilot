@@ -8,6 +8,7 @@
     POST /conversations/{conversation_id}/resolve   (вне §11, раздел 14)
     GET  /businesses/{business_id}/customers        (вне §11, раздел 13)
     GET  /customers/{customer_id}                   (вне §11, раздел 13)
+    PATCH /customers/{customer_id}                  (вне ТЗ, §22: имя, телефон, заметка)
 
 Этап 4 добавляет ручной ответ POST /conversations/{id}/reply (раздел 11), отметку
 «решено» (раздел 14, вне §11) и клиентов с историей обращений (раздел 13, вне §11).
@@ -56,12 +57,14 @@ from schemas import (
     CustomerDetail,
     CustomerListItem,
     CustomerOut,
+    CustomerUpdate,
     LeadOut,
     MessageOut,
     ReplyRequest,
 )
 from services import (
     audit_service,
+    customer_service,
     integration_service,
     lead_service,
     master_notify_service,
@@ -328,6 +331,22 @@ def list_customers(
         )
         for customer, count, last_activity in rows
     ]
+
+
+@router.patch("/customers/{customer_id}", response_model=CustomerOut)
+def update_customer(
+    payload: CustomerUpdate,
+    resolved: tuple[Customer, BusinessContext] = Depends(
+        require_customer_access(MemberRole.OWNER, MemberRole.MANAGER)
+    ),
+    db: Session = Depends(get_db),
+):
+    """Вне ТЗ (§22): имя, телефон и заметка в карточке клиента. Передаются только
+    меняемые поля; пустая строка очищает поле."""
+    customer, ctx = resolved
+    return customer_service.update_customer(
+        db, ctx, customer, **payload.model_dump(exclude_unset=True)
+    )
 
 
 @router.get("/customers/{customer_id}", response_model=CustomerDetail)

@@ -35,6 +35,7 @@ from cabinet_labels import TONE_HINTS
 from config import settings
 from database import get_db
 from models import (
+    Booking,
     BookingStatus,
     Business,
     BusinessMember,
@@ -53,6 +54,7 @@ from services import (
     booking_request_service,
     booking_service,
     business_service,
+    customer_service,
     integration_service,
     lead_service,
     master_service,
@@ -313,7 +315,13 @@ def cabinet_home(request: Request, user: User = Depends(page_user), db: Session 
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"title": "Компании", "user": user, "memberships": memberships, "first": not memberships},
+        {
+            "title": "Компании",
+            "user": user,
+            "memberships": memberships,
+            "first": not memberships,
+            "timezones": RU_TIMEZONES,
+        },
     )
 
 
@@ -417,7 +425,12 @@ def messages_page(
             "decisions_by_reply": {
                 d.response_message_id: d for d in decisions if d.response_message_id
             },
+            # Решение 2026-10-01: ближайшие записи клиента прямо в окне переписки.
+            "bookings": _booking_rows(
+                db, ctx, customer_service.customer_bookings(db, ctx, customer)[0]
+            ),
         }
+    masters = master_service.list_masters(db, ctx)
 
     counts = analytics_service.conversation_counts(db, ctx.business_id)
     members = business_service.list_members(db, ctx)
@@ -439,6 +452,9 @@ def messages_page(
         explicit=explicit_id is not None and selected is not None,
         members=[{"id": u.id, "email": u.email} for _m, u in members],
         lead_statuses=[s.value for s in LeadStatus],
+        # Для диалога «Перенести запись» в окне переписки.
+        masters=masters,
+        master_services=master_service.service_ids_by_master(db, [m.id for m in masters]),
     )
 
 
@@ -555,16 +571,41 @@ def customer_page(
     if customer is None or customer.business_id != ctx.business_id:
         raise HTTPException(status_code=404, detail="Клиент не найден")
     history = message_service.get_customer_history(db, ctx, customer)
+    # Вне ТЗ (§22), решение 2026-10-01: записи клиента к мастерам в его карточке.
+    upcoming, past, visits = customer_service.customer_bookings(db, ctx, customer)
     return render(
         request,
         db,
         ctx,
         "customer_detail.html",
         "customers",
-        customer.name or (f"@{customer.username}" if customer.username else "Клиент"),
+        customer_service.display_name(customer),
         customer=customer,
         history=history,
+        upcoming=_booking_rows(db, ctx, upcoming),
+        past=_booking_rows(db, ctx, past),
+        visits=visits,
+        can_edit=master_service.is_staff(ctx),
     )
+
+
+def _booking_rows(db: Session, ctx: BusinessContext, bookings: list[Booking]) -> list[dict]:
+    """Записи для карточки: время в поясе компании, имена мастера и услуги."""
+    tz = schedule_service.business_tz(ctx.business)
+    masters = {m.id: m.display_name for m in master_service.list_masters(db, ctx)}
+    services = {s.id: s.name for s in business_service.list_services(db, ctx)}
+    rows = []
+    for b in bookings:
+        start = b.starts_at if b.starts_at.tzinfo else b.starts_at.replace(tzinfo=UTC)
+        rows.append(
+            {
+                "booking": b,
+                "local": start.astimezone(tz),
+                "master": masters.get(b.master_id, "—"),
+                "service": services.get(b.service_id, "Услуга") if b.service_id else "Услуга",
+            }
+        )
+    return rows
 
 
 # --------------------------------------------------------------------------- #
@@ -714,6 +755,7 @@ def schedule_page(
         next_week=(start + timedelta(days=7)).isoformat(),
         this_week=schedule_service.week_start(today).isoformat(),
         tz_name=ctx.business.timezone,
+        fill_days=timedelta(days=27),  # «Повторять смены»: по умолчанию 4 недели
     )
 
 
@@ -750,6 +792,16 @@ def bookings_page(
     services = business_service.list_services(db, ctx)
     service_names = {s.id: s.name for s in services}
     is_staff = master_service.is_staff(ctx)
+    # Решение 2026-10-01: телефон клиента рядом с записью (клиенты только этой компании).
+    customer_ids = {b.customer_id for b in rows if b.customer_id}
+    phones: dict[int, str | None] = {}
+    if customer_ids:
+        for customer_id, phone in db.execute(
+            select(Customer.id, Customer.phone).where(
+                Customer.business_id == ctx.business_id, Customer.id.in_(customer_ids)
+            )
+        ):
+            phones[customer_id] = phone
     items = [
         {
             "booking": b,
@@ -757,6 +809,7 @@ def bookings_page(
             "end": _local(b.ends_at, tz),
             "master": master_names.get(b.master_id, "—"),
             "service": service_names.get(b.service_id or 0, "—"),
+            "phone": phones.get(b.customer_id) if b.customer_id else None,
         }
         for b in rows
     ]
@@ -806,6 +859,8 @@ def bookings_page(
         requests=requests,
         masters=masters,
         services=[s for s in services if s.active],
+        # Услуги мастера: формы записи и переноса показывают только их (пусто — все).
+        master_services=master_service.service_ids_by_master(db, [m.id for m in masters]),
         is_staff=is_staff,
         date_from=start.isoformat(),
         date_to=end.isoformat(),

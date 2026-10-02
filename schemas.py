@@ -131,6 +131,17 @@ class BusinessCreate(BaseModel):
     ai_tone: AiTone = AiTone.FRIENDLY
     ai_auto_reply: bool = True
     escalation_contact: str | None = Field(default=None, max_length=255)
+    # Решение 2026-10-01: пояс выбирается сразу (раньше — только в «Записи к мастерам»).
+    timezone: str = Field(default="Europe/Moscow", max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Неизвестный часовой пояс") from exc
+        return value
 
 
 class BusinessUpdate(BaseModel):
@@ -152,6 +163,8 @@ class BusinessUpdate(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     booking_enabled: bool | None = None
     slot_step_minutes: int | None = Field(default=None, ge=5, le=120)
+    # Напоминания клиентам о записи за сутки и за 2 часа (решение 2026-10-01).
+    reminders_enabled: bool | None = None
 
     @field_validator("timezone")
     @classmethod
@@ -174,6 +187,7 @@ class BusinessUpdate(BaseModel):
             "timezone",
             "booking_enabled",
             "slot_step_minutes",
+            "reminders_enabled",
         ):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} не может быть null")
@@ -197,6 +211,7 @@ class BusinessOut(ORMModel):
     timezone: str = "Europe/Moscow"
     booking_enabled: bool = False
     slot_step_minutes: int = 30
+    reminders_enabled: bool = True
     created_at: datetime
     updated_at: datetime
 
@@ -342,6 +357,17 @@ class CustomerOut(ORMModel):
     username: str | None
     phone: str | None
     channel_blocked: bool
+    # Вне ТЗ (§22): имя со слов клиента и заметка администратора.
+    contact_name: str | None = None
+    notes: str | None = None
+
+
+class CustomerUpdate(BaseModel):
+    """Правка карточки клиента сотрудником (вне ТЗ, §22). Пустая строка — очистить."""
+
+    contact_name: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=50)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class MessageOut(ORMModel):
@@ -657,6 +683,35 @@ class ShiftCreate(BaseModel):
     day: date
     start_time: time
     end_time: time
+
+
+class ShiftFill(BaseModel):
+    """Смены по шаблону (решение 2026-10-01): дни недели 0=пн…6=вс за период."""
+
+    date_from: date
+    date_to: date
+    weekdays: list[int] = Field(min_length=1, max_length=7)
+    start_time: time
+    end_time: time
+
+    @field_validator("weekdays")
+    @classmethod
+    def _valid_weekdays(cls, value: list[int]) -> list[int]:
+        if any(d < 0 or d > 6 for d in value):
+            raise ValueError("День недели — число от 0 (пн) до 6 (вс)")
+        return value
+
+
+class ShiftCopyWeek(BaseModel):
+    """Скопировать смены недели (любой её день) на следующие недели."""
+
+    week: date
+    weeks: int = Field(default=1, ge=1, le=8)
+
+
+class ShiftBulkResult(BaseModel):
+    created: int
+    skipped: int
 
 
 class ShiftUpdate(BaseModel):

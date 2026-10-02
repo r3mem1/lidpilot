@@ -45,7 +45,13 @@ from routes import integrations as integrations_routes
 from routes import leads as leads_routes
 from routes import messages as messages_routes
 from routes import team as team_routes
-from services import audit_service, master_notify_service, message_service, rate_limit_service
+from services import (
+    audit_service,
+    master_notify_service,
+    message_service,
+    rate_limit_service,
+    reminder_service,
+)
 from services.auth_service import hash_password
 from templating import templates
 
@@ -142,6 +148,26 @@ async def _reprocess_loop() -> None:
         await asyncio.sleep(settings.reprocess_interval_seconds)
 
 
+def _send_reminders() -> int:
+    with SessionLocal() as db:
+        return reminder_service.send_due(db)
+
+
+async def _reminder_loop() -> None:
+    """Вне ТЗ (§22), решение 2026-10-01: напоминания клиентам о записи за сутки и
+    за 2 часа. Дубли исключены атомарной отметкой в reminder_service."""
+    while True:
+        try:
+            sent = await run_in_threadpool(_send_reminders)
+            if sent:
+                logger.info("Напоминания о записи: отправлено — %s", sent)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - цикл не должен умирать из-за одного сбоя
+            logger.exception("Сбой цикла напоминаний о записи")
+        await asyncio.sleep(settings.reminder_interval_seconds)
+
+
 async def _log_retention_loop() -> None:
     """Раздел 17: system_logs не растёт бесконечно — старые события удаляются
     раз в system_logs_purge_interval_hours (первый запуск — при старте).
@@ -182,6 +208,8 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(_reprocess_loop()))
     if settings.system_logs_purge_interval_hours > 0:
         tasks.append(asyncio.create_task(_log_retention_loop()))
+    if settings.reminder_interval_seconds > 0:
+        tasks.append(asyncio.create_task(_reminder_loop()))
     try:
         yield
     finally:

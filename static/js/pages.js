@@ -155,6 +155,10 @@
       form.elements.day.value = button.dataset.day;
       form.elements.start_time.value = button.dataset.time;
       form.elements.master_id.value = button.dataset.master;
+      Array.prototype.forEach.call(form.elements.master_id.options, function (o) {
+        o.disabled = o.hidden = !masterDoes(o, button.dataset.service);
+      });
+      chooseFirstEnabled(form.elements.master_id);
       $("[data-reschedule-what]", rescheduleDialog).textContent = button.dataset.what;
       rescheduleDialog.showModal();
       form.elements.day.focus();
@@ -236,10 +240,37 @@
       $("[data-request-client]", note).textContent = button.dataset.client || "Клиент";
       note.hidden = false;
     }
+    filterNewBookingServices();
     form.scrollIntoView({ block: "center" });
     var next = form.elements.start_time.value ? form.elements.master_id : form.elements.start_time;
     next.focus();
   });
+
+  /* ---------- Записи: только услуги, которые делает мастер ----------
+     У варианта мастера data-services="1,4" (пусто — мастер делает все услуги). */
+  function masterDoes(option, serviceId) {
+    var list = option && option.dataset.services;
+    return !list || !serviceId || list.split(",").indexOf(String(serviceId)) !== -1;
+  }
+  function chooseFirstEnabled(select) {
+    var current = select.options[select.selectedIndex];
+    if (current && !current.disabled) return;
+    var first = Array.prototype.find.call(select.options, function (o) { return !o.disabled; });
+    if (first) select.value = first.value;
+  }
+  function filterNewBookingServices() {
+    var form = $("#nb-form");
+    if (!form) return;
+    var master = form.elements.master_id.options[form.elements.master_id.selectedIndex];
+    Array.prototype.forEach.call(form.elements.service_id.options, function (o) {
+      o.disabled = o.hidden = !masterDoes(master, o.value);
+    });
+    chooseFirstEnabled(form.elements.service_id);
+  }
+  document.addEventListener("change", function (event) {
+    if (event.target && event.target.id === "nb-master") filterNewBookingServices();
+  });
+  filterNewBookingServices();
 
   /* ---------- Новые сообщения: тихий опрос вместо перезагрузки страницы ---------- */
   var inbox = $("[data-poll]");

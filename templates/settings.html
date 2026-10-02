@@ -60,7 +60,16 @@
     <div class="sheet-body">
       {% if telegram and telegram.status.value == 'ACTIVE' %}
         <p>Бот <strong>@{{ telegram.external_account_name or 'без имени' }}</strong> принимает сообщения клиентов.</p>
-        <p class="muted">Адрес webhook: {{ webhook_url or 'не задан' }}</p>
+        {% if telegram.external_account_name %}
+          {% set bot_link = 'https://t.me/' ~ telegram.external_account_name %}
+          <p>Ссылка для клиентов — разместите её в соцсетях, на сайте и на визитках:</p>
+          <div class="copybox">
+            <a class="input" href="{{ bot_link }}" target="_blank" rel="noopener noreferrer">{{ bot_link }}</a>
+            <button class="btn" type="button" data-copy="{{ bot_link }}">Скопировать</button>
+          </div>
+          <p class="muted">Откройте ссылку и напишите боту сами — так вы увидите, что получает клиент.</p>
+        {% endif %}
+        <details class="muted"><summary>Технические данные</summary><p>Адрес webhook: {{ webhook_url or 'не задан' }}</p></details>
         <div class="form-actions">
           <button class="btn btn--danger" type="button" data-api-click data-url="/businesses/{{ business_id }}/integrations/telegram" data-method="DELETE"
                   data-confirm="Отключить бота? Клиенты перестанут получать ответы, пока вы не подключите его снова." data-confirm-ok="Отключить" data-success="reload">Отключить бота</button>
@@ -95,7 +104,15 @@
     <div class="sheet-body">
       {% if vk and vk.status.value == 'ACTIVE' %}
         <p>Сообщество <strong>{{ vk.external_account_name or ('id' ~ vk.external_account_id) }}</strong> принимает сообщения клиентов.</p>
-        <p class="muted">Адрес Callback API: {{ vk_webhook_url or 'не задан' }}</p>
+        {% if vk.external_account_id %}
+          {% set vk_link = 'https://vk.me/club' ~ vk.external_account_id %}
+          <p>Ссылка, по которой клиенты напишут сообществу:</p>
+          <div class="copybox">
+            <a class="input" href="{{ vk_link }}" target="_blank" rel="noopener noreferrer">{{ vk_link }}</a>
+            <button class="btn" type="button" data-copy="{{ vk_link }}">Скопировать</button>
+          </div>
+        {% endif %}
+        <details class="muted"><summary>Технические данные</summary><p>Адрес Callback API: {{ vk_webhook_url or 'не задан' }}</p></details>
         <div class="form-actions">
           <button class="btn btn--danger" type="button" data-api-click data-url="/businesses/{{ business_id }}/integrations/vk" data-method="DELETE"
                   data-confirm="Отключить сообщество? Клиенты из VK перестанут получать ответы, пока вы не подключите его снова." data-confirm-ok="Отключить" data-success="reload">Отключить сообщество</button>
@@ -143,6 +160,7 @@
         </div>
       
       <label class="check check--block"><input type="checkbox" name="booking_enabled"{% if business.booking_enabled %} checked{% endif %}{% if not masters_count and not business.booking_enabled %} disabled{% endif %}> Ассистент записывает клиентов по расписанию</label>
+      <label class="check check--block"><input type="checkbox" name="reminders_enabled"{% if business.reminders_enabled %} checked{% endif %}> Напоминать клиентам о записи — за сутки и за 2 часа</label>
       <div class="form-actions">
         <button class="btn btn--primary" type="submit">Сохранить</button>
         <span class="form-status" data-status role="status"></span>

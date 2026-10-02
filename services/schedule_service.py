@@ -147,6 +147,134 @@ def create_shift(
     return shift
 
 
+def _overlaps(db: Session, master_id: int, day: date, start: time, end: time) -> bool:
+    return (
+        db.scalar(
+            select(MasterShift.id).where(
+                MasterShift.master_id == master_id,
+                MasterShift.day == day,
+                MasterShift.start_time < end,
+                MasterShift.end_time > start,
+            )
+        )
+        is not None
+    )
+
+
+def fill_shifts(
+    db: Session,
+    ctx: BusinessContext,
+    master: Master,
+    *,
+    date_from: date,
+    date_to: date,
+    weekdays: set[int],
+    start: time,
+    end: time,
+) -> tuple[int, int]:
+    """Смены по дням недели за период — решение 2026-10-01 («пн–пт 10–20 на месяц»
+    одним действием). Дни, где уже есть пересекающаяся смена, пропускаются.
+    Возвращает (создано, пропущено)."""
+    _require_edit(ctx, master)
+    _check_range(date_from, date_to)
+    if start >= end:
+        raise HTTPException(status_code=422, detail="Начало смены должно быть раньше конца")
+    if not weekdays:
+        raise HTTPException(status_code=422, detail="Отметьте хотя бы один день недели")
+    created = skipped = 0
+    day = date_from
+    while day <= date_to:
+        if day.weekday() in weekdays:
+            if _overlaps(db, master.id, day, start, end):
+                skipped += 1
+            else:
+                db.add(
+                    MasterShift(
+                        business_id=ctx.business_id,
+                        master_id=master.id,
+                        day=day,
+                        start_time=start,
+                        end_time=end,
+                    )
+                )
+                db.flush()
+                created += 1
+        day += timedelta(days=1)
+    audit_service.log_event(
+        db,
+        event_type=audit_service.EventType.SHIFTS_FILLED,
+        message=(
+            f"Смены мастера «{master.display_name}» по шаблону: {date_from:%d.%m}–"
+            f"{date_to:%d.%m} {start:%H:%M}–{end:%H:%M}, создано {created}"
+        ),
+        business_id=ctx.business_id,
+        actor_user_id=ctx.user.id,
+        payload={
+            "master_id": master.id,
+            "weekdays": sorted(weekdays),
+            "created": created,
+            "skipped": skipped,
+        },
+    )
+    db.commit()
+    return created, skipped
+
+
+def copy_week(
+    db: Session, ctx: BusinessContext, masters: list[Master], *, week: date, weeks: int
+) -> tuple[int, int]:
+    """Скопировать смены недели (с понедельника week) на следующие weeks недель
+    для мастеров, чьё расписание пользователь может править. Возвращает
+    (создано, пропущено из-за пересечений)."""
+    source = week_start(week)
+    editable = [m for m in masters if master_service.can_edit_schedule(ctx, m)]
+    if not editable:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Недостаточно прав для этого действия"
+        )
+    shifts = db.scalars(
+        select(MasterShift).where(
+            MasterShift.business_id == ctx.business_id,
+            MasterShift.master_id.in_([m.id for m in editable]),
+            MasterShift.day >= source,
+            MasterShift.day <= source + timedelta(days=6),
+        )
+    ).all()
+    created = skipped = 0
+    for k in range(1, weeks + 1):
+        for shift in shifts:
+            day = shift.day + timedelta(days=7 * k)
+            if _overlaps(db, shift.master_id, day, shift.start_time, shift.end_time):
+                skipped += 1
+                continue
+            db.add(
+                MasterShift(
+                    business_id=ctx.business_id,
+                    master_id=shift.master_id,
+                    day=day,
+                    start_time=shift.start_time,
+                    end_time=shift.end_time,
+                )
+            )
+            db.flush()
+            created += 1
+    audit_service.log_event(
+        db,
+        event_type=audit_service.EventType.SHIFTS_COPIED,
+        message=f"Смены недели с {source:%d.%m} скопированы на {weeks} нед., создано {created}",
+        business_id=ctx.business_id,
+        actor_user_id=ctx.user.id,
+        payload={
+            "week": source.isoformat(),
+            "weeks": weeks,
+            "created": created,
+            "skipped": skipped,
+        },
+    )
+    db.commit()
+    return created, skipped
+
+
 def update_shift(
     db: Session, ctx: BusinessContext, shift: MasterShift, start: time, end: time
 ) -> MasterShift:

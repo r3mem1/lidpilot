@@ -74,6 +74,8 @@ class EventType:
     # Этап 9: клиент запретил/разрешил сообщения от сообщества (VK)
     CUSTOMER_CHANNEL_BLOCKED: Final = "CUSTOMER_CHANNEL_BLOCKED"
     CUSTOMER_CHANNEL_UNBLOCKED: Final = "CUSTOMER_CHANNEL_UNBLOCKED"
+    CUSTOMER_CONTACT_SAVED: Final = "CUSTOMER_CONTACT_SAVED"  # клиент оставил имя/телефон
+    CUSTOMER_UPDATED: Final = "CUSTOMER_UPDATED"  # сотрудник поправил карточку клиента
 
     # CRM-ядро (этап 4, разделы 14, 17)
     LEAD_CREATED: Final = "LEAD_CREATED"
@@ -102,12 +104,15 @@ class EventType:
     SHIFT_CREATED: Final = "SHIFT_CREATED"
     SHIFT_UPDATED: Final = "SHIFT_UPDATED"
     SHIFT_DELETED: Final = "SHIFT_DELETED"
+    SHIFTS_FILLED: Final = "SHIFTS_FILLED"  # смены по дням недели за период
+    SHIFTS_COPIED: Final = "SHIFTS_COPIED"  # смены недели скопированы вперёд
     BOOKING_HELD: Final = "BOOKING_HELD"  # бронь от AI, ждёт подтверждения
     BOOKING_CREATED: Final = "BOOKING_CREATED"  # запись создал сотрудник
     BOOKING_CONFIRMED: Final = "BOOKING_CONFIRMED"
     BOOKING_REJECTED: Final = "BOOKING_REJECTED"
     BOOKING_CANCELLED: Final = "BOOKING_CANCELLED"
     BOOKING_RESCHEDULED: Final = "BOOKING_RESCHEDULED"  # сотрудник перенёс запись
+    BOOKING_REMINDER_SENT: Final = "BOOKING_REMINDER_SENT"  # напоминание клиенту о записи
     MASTER_NOTIFY_LINKED: Final = "MASTER_NOTIFY_LINKED"
     MASTER_NOTIFY_UNLINKED: Final = "MASTER_NOTIFY_UNLINKED"
     MASTER_NOTIFY_SENT: Final = "MASTER_NOTIFY_SENT"

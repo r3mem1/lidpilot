@@ -28,6 +28,7 @@ from ai.booking import (
     BookingOutcome,
     RequestDraft,
     ScheduleProvider,
+    change_action,
     render_request_reply,
     service_candidates,
     summarize_request,
@@ -38,6 +39,14 @@ from ai.classifier import (
     MessageClassifier,
     Priority,
     classify_by_rules,
+)
+from ai.contacts import (
+    CONTACT_ASK,
+    CONTACT_ASK_PHONE,
+    CONTACT_PROMPT_VERSION,
+    Contact,
+    extract_contact,
+    format_phone,
 )
 from ai.context import BusinessKnowledge, HistoryTurn
 from ai.faq import FAQ_PROMPT_VERSION, LATE_RE, discount_question, faq_answer
@@ -104,6 +113,9 @@ class PipelineResult:
     booking_request: RequestDraft | None = None
     # Владелец выключил автоответы: клиенту не уходит ничего, даже шаблон.
     client_reply_allowed: bool = True
+    # Вне ТЗ (§22), решение 2026-10-01: имя и телефон, которые клиент написал сам —
+    # message_service сохраняет их в карточку клиента.
+    contact: Contact | None = None
 
     @property
     def needs_manager(self) -> bool:
@@ -152,6 +164,12 @@ class PipelineResult:
             payload["booking"] = self.booking.as_dict()
         if self.booking_request:
             payload["booking_request"] = self.booking_request.as_dict()
+        if self.contact:
+            # В журнал — только факт (персональные данные остаются в карточке клиента).
+            payload["contact"] = {
+                "name": bool(self.contact.name),
+                "phone": bool(self.contact.phone),
+            }
         return payload
 
 
@@ -208,6 +226,12 @@ BOOKING_STEP: dict[BookingKind, str] = {
     BookingKind.ASK_SERVICE: "уточняется услуга",
     BookingKind.WINDOWS: "названо свободное время мастеров",
     BookingKind.NO_SLOTS: "свободного времени нет",
+    BookingKind.CHANGE_CHOOSE: "уточняется, какую запись изменить",
+    BookingKind.CANCEL_ASK: "клиент подтверждает отмену записи",
+    BookingKind.CANCELLED: "клиент отменил запись",
+    BookingKind.KEPT: "клиент передумал отменять",
+    BookingKind.MOVE_ASK: "подбирается время для переноса",
+    BookingKind.MOVED: "клиент перенёс запись",
 }
 
 _SAFE_REPLIES: dict[EscalationReason, str | None] = {
@@ -346,12 +370,64 @@ class AIPipeline:
         history: list[HistoryTurn] | None = None,
         schedule: ScheduleProvider | None = None,
     ) -> PipelineResult:
-        result = self._decide(text, knowledge, history or [], schedule)
+        history = history or []
+        contact, knowledge, early = self._contact_step(text, knowledge, history)
+        result = early or self._decide(text, knowledge, history, schedule)
+        if contact is not None and result.contact is None:
+            result = replace(result, contact=contact)
         # Владелец выключил автоответы (раздел 13): AI только классифицирует,
         # клиенту не уходит ничего — ни ответ, ни шаблон при эскалации.
         if not knowledge.auto_reply and result.decision is Decision.ESCALATE:
             return replace(result, client_reply_allowed=False)
         return result
+
+    @staticmethod
+    def _contact_step(
+        text: str, knowledge: BusinessKnowledge, history: list[HistoryTurn]
+    ) -> tuple[Contact | None, BusinessKnowledge, PipelineResult | None]:
+        """Имя и телефон клиента (решение заказчика 2026-10-01). Номер берётся из
+        любого сообщения; на просьбу оставить контакты отвечаем шаблоном сразу.
+        Возвращает (контакт, контекст, готовый ответ или None)."""
+        if knowledge.customer_has_phone:
+            return None, knowledge, None
+        normalized = normalize(text)
+        last = _last_ai_text(history) or ""
+        # Просьба отменить/перенести запись — не ответ с контактами.
+        awaiting = last.endswith((CONTACT_ASK, CONTACT_ASK_PHONE)) and not change_action(normalized)
+        contact = extract_contact(normalized, expect_name=awaiting)
+        if contact.empty:
+            return None, knowledge, None
+        reply = None
+        if awaiting and contact.phone:
+            hello = f", {contact.name}" if contact.name else ""
+            reply = f"Спасибо{hello}! Записали ваш номер {format_phone(contact.phone)}. Ждём вас!"
+        elif awaiting and contact.name and len(normalized.split()) <= 3:
+            reply = f"Спасибо, {contact.name}! {CONTACT_ASK_PHONE}"
+        if reply is None:
+            # Номер уже есть в этом сообщении — после брони его не переспрашиваем.
+            if contact.phone:
+                knowledge = replace(knowledge, customer_has_phone=True)
+            return contact, knowledge, None
+        result = PipelineResult(
+            decision=Decision.SEND,
+            normalized_text=normalized,
+            classification=Classification(
+                intent=Intent.OTHER,
+                priority=Priority.COLD,
+                needs_manager=False,
+                reason="Клиент оставил контакты",
+            ),
+            reply_text=reply,
+            response=GeneratedResponse(
+                text=reply,
+                model="contact-template",
+                prompt_version=CONTACT_PROMPT_VERSION,
+                latency_ms=0,
+                source=ResponseSource.FAQ_TEMPLATE,
+            ),
+            contact=contact,
+        )
+        return contact, knowledge, result
 
     def _decide(
         self,
@@ -678,9 +754,11 @@ class AIPipeline:
             Intent.SPAM,
         ):
             return False
-        # Отмена и перенос существующей записи — решает человек (движок только записывает).
-        if _CANCEL_RE.search(text):
-            return False
+        # Отмена и перенос своей записи (решение 2026-10-01): если запись клиента есть
+        # в системе — движок делает это сам; если нет (записывали по телефону) —
+        # как раньше, решает человек.
+        if _CANCEL_RE.search(text) or change_action(text):
+            return bool(schedule.client_bookings())
         if not (classification.intent is Intent.BOOKING or schedule.in_booking_dialog()):
             return False
         # Ни одна услуга не привязана к мастеру — записывать не на что: иначе движок
@@ -728,13 +806,18 @@ class AIPipeline:
             latency_ms=int((time.monotonic() - started) * 1000),
             source=ResponseSource.BOOKING_ENGINE,
         )
+        reply = outcome.reply
+        if outcome.kind is BookingKind.HOLD and not knowledge.customer_has_phone:
+            # Решение заказчика 2026-10-01: при записи собираем имя и телефон.
+            reply = f"{reply}\n\n{CONTACT_ASK}"
+            response = replace(response, text=reply)
         # Валидатор LLM-текста не применяется: ответ собран шаблоном только из
         # данных расписания в БД, свободное время в нём — результат запроса к БД.
         return PipelineResult(
             decision=Decision.SEND,
             normalized_text=normalized,
             classification=classification,
-            reply_text=outcome.reply,
+            reply_text=reply,
             response=response,
             latency_ms=elapsed(),
             booking=outcome,

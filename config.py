@@ -128,6 +128,8 @@ class Settings(BaseSettings):
     # Повторная обработка (раздел 18): сообщения, застрявшие после сбоя AI/БД,
     # подхватываются фоновым циклом. 0 — цикл выключен (тесты).
     reprocess_interval_seconds: int = 60
+    # Напоминания клиентам о записи (вне ТЗ, §22): как часто проверять; 0 — выключено.
+    reminder_interval_seconds: int = 300
     message_max_attempts: int = 3
     message_processing_timeout_seconds: int = 300
     # Клиент часто пишет несколькими сообщениями подряд: webhook ждёт столько

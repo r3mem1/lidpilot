@@ -83,7 +83,7 @@
               {% if is_staff %}<td>{{ it.master }}</td>{% endif %}
               <td>
                 <span class="cell-title">{{ it.service }}</span>
-                <div class="cell-sub">{{ b.client_name }}{% if b.source.value == 'AI' %} · бронь ассистента{% endif %}{% if is_staff and b.conversation_id %} · <a href="/cabinet/{{ business_id }}/messages?c={{ b.conversation_id }}">диалог</a>{% endif %}</div>
+                <div class="cell-sub">{{ b.client_name }}{% if it.phone %} · <a href="tel:{{ it.phone }}">{{ format_phone(it.phone) }}</a>{% endif %}{% if b.source.value == 'AI' %} · бронь ассистента{% endif %}{% if is_staff and b.conversation_id %} · <a href="/cabinet/{{ business_id }}/messages?c={{ b.conversation_id }}">диалог</a>{% endif %}</div>
                 {% if b.comment %}<div class="cell-sub">{{ b.comment }}</div>{% endif %}
               </td>
               <td><span class="tag{% if b.status.value == 'PENDING' %} tag--warm{% elif b.status.value == 'CONFIRMED' %} tag--ok{% endif %}">{{ label('booking_status', b.status) }}</span></td>
@@ -94,7 +94,7 @@
                     <button class="btn btn--small" type="button" data-api-click data-url="/bookings/{{ b.id }}/reject" data-confirm="Отклонить бронь {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение, диалог перейдёт в «Требует внимания»." data-confirm-ok="Отклонить" data-success="reload">Отклонить</button>
                   {% endif %}
                   {% if is_staff and b.status.value in ('PENDING', 'CONFIRMED') %}
-                    <button class="btn btn--small" type="button" data-reschedule="{{ b.id }}" data-day="{{ it.local.strftime('%Y-%m-%d') }}" data-time="{{ it.local.strftime('%H:%M') }}" data-master="{{ b.master_id }}" data-what="{{ it.service }}, {{ b.client_name }}">Перенести</button>
+                    <button class="btn btn--small" type="button" data-reschedule="{{ b.id }}" data-day="{{ it.local.strftime('%Y-%m-%d') }}" data-time="{{ it.local.strftime('%H:%M') }}" data-master="{{ b.master_id }}" data-service="{{ b.service_id or '' }}" data-what="{{ it.service }}, {{ b.client_name }}">Перенести</button>
                     <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/bookings/{{ b.id }}/cancel" data-confirm="Отменить запись {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение." data-confirm-ok="Отменить запись" data-success="reload">Отменить</button>
                   {% endif %}
                 </div>
@@ -148,7 +148,7 @@
           <div class="field">
             <label for="nb-master">Мастер</label>
             <select class="select" id="nb-master" name="master_id" data-type="int" required>
-              {% for m in masters if m.active %}<option value="{{ m.id }}">{{ m.display_name }}</option>{% endfor %}
+              {% for m in masters if m.active %}<option value="{{ m.id }}" data-services="{{ master_services.get(m.id, [])|join(',') }}">{{ m.display_name }}</option>{% endfor %}
             </select>
           </div>
           <div class="field">
@@ -184,34 +184,6 @@
     </section>
   </div>
 
-  <dialog class="dialog" id="reschedule-dialog" aria-labelledby="reschedule-title">
-    <form data-api-form data-method="POST" data-url="/bookings/{booking_id}/reschedule" data-success="reload" novalidate>
-      <h2 id="reschedule-title">Перенести запись</h2>
-      <p class="muted" data-reschedule-what></p>
-      <input type="hidden" name="booking_id">
-      <div class="form-row">
-        <div class="field">
-          <label for="rs-day">Дата</label>
-          <input class="input" id="rs-day" name="day" type="date" required>
-        </div>
-        <div class="field">
-          <label for="rs-time">Время</label>
-          <input class="input" id="rs-time" name="start_time" type="time" step="300" required>
-        </div>
-      </div>
-      <div class="field">
-        <label for="rs-master">Мастер</label>
-        <select class="select" id="rs-master" name="master_id" data-type="int">
-          {% for m in masters if m.active %}<option value="{{ m.id }}">{{ m.display_name }}</option>{% endfor %}
-        </select>
-      </div>
-      <p class="hint">Клиент получит одно сообщение: «Ваша запись перенесена» с новым временем.</p>
-      <div class="form-actions">
-        <button class="btn btn--primary" type="submit">Перенести</button>
-        <button class="btn" type="button" data-dialog-close>Отмена</button>
-        <span class="form-status" data-status role="status"></span>
-      </div>
-    </form>
-  </dialog>
+  {% include "_reschedule_dialog.html" %}
 {% endif %}
 {% endblock %}

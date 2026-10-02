@@ -9,6 +9,8 @@
     PUT    /masters/{master_id}/services                  владелец
     GET    /businesses/{business_id}/shifts               все роли (мастер — только свои)
     POST   /masters/{master_id}/shifts                    владелец или сам мастер
+    POST   /masters/{master_id}/shifts/fill               владелец или сам мастер (по дням недели)
+    POST   /businesses/{business_id}/shifts/copy-week     владелец или мастер (свои)
     PUT    /shifts/{shift_id}                             владелец или сам мастер
     DELETE /shifts/{shift_id}                             владелец или сам мастер
     GET    /businesses/{business_id}/bookings             все роли (мастер — только свои)
@@ -44,7 +46,10 @@ from schemas import (
     MasterUpdate,
     NotifyLinkOut,
     NotifyLinkRequest,
+    ShiftBulkResult,
+    ShiftCopyWeek,
     ShiftCreate,
+    ShiftFill,
     ShiftOut,
     ShiftUpdate,
     SlotOut,
@@ -178,6 +183,41 @@ def create_shift(
     return schedule_service.create_shift(
         db, ctx, master, payload.day, payload.start_time, payload.end_time
     )
+
+
+@router.post("/masters/{master_id}/shifts/fill", response_model=ShiftBulkResult)
+def fill_shifts(
+    payload: ShiftFill,
+    resolved: tuple[Master, BusinessContext] = Depends(require_master_access(*SCHEDULE_EDITORS)),
+    db: Session = Depends(get_db),
+):
+    """Смены по дням недели за период (решение 2026-10-01): «пн–пт 10–20 на месяц»."""
+    master, ctx = resolved
+    created, skipped = schedule_service.fill_shifts(
+        db,
+        ctx,
+        master,
+        date_from=payload.date_from,
+        date_to=payload.date_to,
+        weekdays=set(payload.weekdays),
+        start=payload.start_time,
+        end=payload.end_time,
+    )
+    return ShiftBulkResult(created=created, skipped=skipped)
+
+
+@router.post("/businesses/{business_id}/shifts/copy-week", response_model=ShiftBulkResult)
+def copy_week(
+    payload: ShiftCopyWeek,
+    ctx: BusinessContext = Depends(require_business_roles(*SCHEDULE_EDITORS)),
+    db: Session = Depends(get_db),
+):
+    """Смены недели — на следующие недели (владелец — всех мастеров, мастер — свои)."""
+    masters = master_service.list_masters(db, ctx, only_active=True)
+    created, skipped = schedule_service.copy_week(
+        db, ctx, masters, week=payload.week, weeks=payload.weeks
+    )
+    return ShiftBulkResult(created=created, skipped=skipped)
 
 
 @router.put("/shifts/{shift_id}", response_model=ShiftOut)

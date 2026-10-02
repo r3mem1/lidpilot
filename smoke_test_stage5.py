@@ -1197,7 +1197,12 @@ with TestClient(app) as c:
     )
     check(
         "страницы не подключают внешних ресурсов",
-        not re.search(r'(src|href)="https?://', everything),
+        # Ссылки <a> для перехода (t.me/бот) ресурсом не являются; внешние script,
+        # link, img, iframe, source — запрещены.
+        not re.search(
+            r'<(?:script|link|img|iframe|source|video|audio)\b[^>]*(?:src|href)="https?://',
+            everything,
+        ),
     )
 
     print("\n=== 12. Выход и сессия ===")

@@ -322,6 +322,8 @@ td.pole-cell .pole { min-height: 34px; height: 100%; }
 .why { margin: 10px 18px 0; padding: 10px 14px; border-radius: var(--radius-s); background: var(--sheet-2); border: 1px solid var(--line-2); display: grid; gap: 6px; font-size: 14px; }
 .why-alert { color: var(--amber-ink); background: var(--amber-soft); margin: -10px -14px 2px; padding: 8px 14px; border-radius: var(--radius-s) var(--radius-s) 0 0; }
 .why b { font-weight: 600; }
+.client-bookings { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.client-booking { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 /* Проверка ответа: текст клиенту как в мессенджере (переносы строк списка окон). */
 .preview-reply { white-space: pre-line; padding: 8px 12px; border-radius: var(--radius-s); background: var(--sheet); border: 1px solid var(--line-2); }
 .why .muted { font-size: 13px; }
@@ -469,6 +471,7 @@ td.pole-cell .pole { min-height: 34px; height: 100%; }
 .payload summary { cursor: pointer; color: var(--ink-3); font-size: 13px; }
 .payload pre { margin: 6px 0 0; padding: 8px 10px; max-width: 70ch; overflow: auto; background: var(--sheet-2); border-radius: 6px; font: 500 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .checks { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.checks legend { width: 100%; margin-bottom: 4px; font-size: 14px; color: var(--ink-2); }
 .check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; font-weight: 400; }
 fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 /* Этап 9: пошаговая инструкция подключения канала. */

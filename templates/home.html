@@ -28,6 +28,13 @@
           <label for="working_hours">График работы</label>
           <input class="input" id="working_hours" name="working_hours" maxlength="500" data-empty="null" placeholder="пн–сб 10:00–21:00">
         </div>
+        <div class="field">
+          <label for="timezone">Часовой пояс</label>
+          <select class="select" id="timezone" name="timezone" data-guess-tz>
+            {% for value, title in timezones %}<option value="{{ value }}"{% if value == 'Europe/Moscow' %} selected{% endif %}>{{ title }}</option>{% endfor %}
+          </select>
+          <span class="hint">По нему ассистент понимает «сегодня» и «завтра» и предлагает время записи.</span>
+        </div>
         <div class="form-actions">
           <button class="btn btn--primary" type="submit">Создать компанию</button>
           <button class="btn btn--link" type="button" data-logout>Выйти</button>

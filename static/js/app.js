@@ -178,15 +178,51 @@
     if (first && first.focus) first.focus();
   }
 
+  /* data-remember="day,master_id": значения этих полей переживают перезагрузку
+     после сохранения (несколько смен подряд без повторного ввода даты). */
+  var REMEMBER_KEY = "lp-remember:" + window.location.pathname;
+  function rememberFields(form) {
+    var names = (form.dataset.remember || "").split(",").filter(Boolean);
+    if (!names.length) return;
+    var saved = {};
+    names.forEach(function (name) { if (form.elements[name]) saved[name] = form.elements[name].value; });
+    try { window.sessionStorage.setItem(REMEMBER_KEY, JSON.stringify(saved)); } catch (e) { /* хранилище недоступно */ }
+  }
+  function restoreFields() {
+    var saved = null;
+    try { saved = JSON.parse(window.sessionStorage.getItem(REMEMBER_KEY) || "null"); window.sessionStorage.removeItem(REMEMBER_KEY); } catch (e) { return; }
+    if (!saved) return;
+    $$("form[data-remember]").forEach(function (form) {
+      Object.keys(saved).forEach(function (name) {
+        var field = form.elements[name];
+        if (field && field.type !== "hidden") field.value = saved[name];
+      });
+    });
+  }
+
   function finish(target, res) {
     var mode = target.dataset.success || "";
-    if (mode === "reload") { window.location.reload(); return; }
+    if (mode === "reload") {
+      if (target.tagName === "FORM") rememberFields(target);
+      /* data-summary="Создано {created}": итог из ответа сервера — тостом после перезагрузки. */
+      if (target.dataset.summary && res && res.data) {
+        var text = target.dataset.summary.replace(/\{(\w+)\}/g, function (_, key) { return res.data[key] != null ? res.data[key] : ""; });
+        try { window.sessionStorage.setItem("lp-flash", text); } catch (e) { /* без итога */ }
+      }
+      window.location.reload();
+      return;
+    }
     if (mode === "redirect") {
       var to = (target.dataset.redirect || "/cabinet").replace("{id}", res.data && res.data.id != null ? res.data.id : "");
       window.location.assign(to);
       return;
     }
-    if (mode.indexOf("message:") === 0) toast(mode.slice(8));
+    if (mode.indexOf("message:") === 0) {
+      toast(mode.slice(8));
+      /* Подтверждение и рядом с кнопкой: тост легко пропустить. */
+      var status = target.querySelector && target.querySelector("[data-status]");
+      if (status) status.textContent = "✓ " + mode.slice(8);
+    }
   }
 
   /* ---------- Формы: data-api-form ---------- */
@@ -394,8 +430,33 @@
   }
 
   /* ---------- Запуск ---------- */
+  /* data-copy="текст": кнопка «Скопировать» (ссылка на бота и т. п.). */
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("[data-copy]");
+    if (!button) return;
+    var text = button.dataset.copy;
+    var done = function () { toast("Скопировано"); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { toast(text); });
+    else toast(text);
+  });
+
+  /* Анкета компании: часовой пояс по умолчанию — пояс браузера, если он в списке. */
+  function guessTimezone() {
+    var select = $("select[data-guess-tz]");
+    if (!select) return;
+    var zone = "";
+    try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return; }
+    if ($("option[value='" + zone.replace(/'/g, "") + "']", select)) select.value = zone;
+  }
+
   function ready() {
     localizeTimes(document);
+    restoreFields();
+    guessTimezone();
+    try {
+      var flash = window.sessionStorage.getItem("lp-flash");
+      if (flash) { window.sessionStorage.removeItem("lp-flash"); toast(flash); }
+    } catch (e) { /* хранилище недоступно */ }
     var log = $("#log");
     if (log) log.scrollTop = log.scrollHeight;
   }

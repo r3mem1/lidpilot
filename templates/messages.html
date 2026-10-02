@@ -64,7 +64,7 @@
           {% if conv.handled_by_manager and conv.status.value != 'RESOLVED' %}<span class="tag tag--info">Ведёт менеджер</span>{% endif %}
         </div>
         <div class="thread-tools">
-          <span class="muted">{{ label('channel', detail.customer.channel) }}{% if detail.customer.username %} · @{{ detail.customer.username }}{% endif %}</span>
+          <span class="muted">{{ label('channel', detail.customer.channel) }}{% if detail.customer.username %} · @{{ detail.customer.username }}{% endif %}{% if detail.customer.phone %} · <a href="tel:{{ detail.customer.phone }}">{{ format_phone(detail.customer.phone) }}</a>{% endif %}</span>
           <a href="/cabinet/{{ business_id }}/customers/{{ detail.customer.id }}">История клиента</a>
           {% if lead %}
             <label>Статус лида
@@ -98,6 +98,20 @@
           <span class="muted">{{ label('ai_status', detail.last_decision.status) }}{% if detail.last_decision.model %}, модель {{ detail.last_decision.model }}{% endif %}{% if detail.last_decision.latency_ms %}, {{ detail.last_decision.latency_ms }} мс{% endif %}</span>
         {% endif %}
       </div>
+
+      {% if detail.bookings %}
+        <div class="why client-bookings">
+          <b>Записи клиента:</b>
+          {% for it in detail.bookings %}
+            {% set b = it.booking %}
+            <span class="client-booking">
+              {{ it.local.strftime('%d.%m %H:%M') }} · {{ it.service }} · {{ it.master }}{% if b.status.value == 'PENDING' %} · <span class="tag tag--warm">ждёт подтверждения</span>{% endif %}
+              <button class="btn btn--small" type="button" data-reschedule="{{ b.id }}" data-day="{{ it.local.strftime('%Y-%m-%d') }}" data-time="{{ it.local.strftime('%H:%M') }}" data-master="{{ b.master_id }}" data-service="{{ b.service_id or '' }}" data-what="{{ it.service }}, {{ b.client_name }}">Перенести</button>
+              <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/bookings/{{ b.id }}/cancel" data-confirm="Отменить запись {{ it.local.strftime('%d.%m %H:%M') }}? Клиент получит сообщение." data-confirm-ok="Отменить запись" data-success="reload">Отменить</button>
+            </span>
+          {% endfor %}
+        </div>
+      {% endif %}
 
       <div class="log" id="log" tabindex="0" aria-label="Переписка">
         {% for msg in detail.messages %}
@@ -140,4 +154,5 @@
     {% endif %}
   </div>
 </section>
+{% include "_reschedule_dialog.html" %}
 {% endblock %}

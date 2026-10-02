@@ -1,0 +1,30 @@
+{# Перенос записи (вне ТЗ, §22): «Записи» и окно переписки. Нужны masters и master_services. #}
+  <dialog class="dialog" id="reschedule-dialog" aria-labelledby="reschedule-title">
+    <form data-api-form data-method="POST" data-url="/bookings/{booking_id}/reschedule" data-success="reload" novalidate>
+      <h2 id="reschedule-title">Перенести запись</h2>
+      <p class="muted" data-reschedule-what></p>
+      <input type="hidden" name="booking_id">
+      <div class="form-row">
+        <div class="field">
+          <label for="rs-day">Дата</label>
+          <input class="input" id="rs-day" name="day" type="date" required>
+        </div>
+        <div class="field">
+          <label for="rs-time">Время</label>
+          <input class="input" id="rs-time" name="start_time" type="time" step="300" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="rs-master">Мастер</label>
+        <select class="select" id="rs-master" name="master_id" data-type="int">
+          {% for m in masters if m.active %}<option value="{{ m.id }}" data-services="{{ master_services.get(m.id, [])|join(',') }}">{{ m.display_name }}</option>{% endfor %}
+        </select>
+      </div>
+      <p class="hint">Клиент получит одно сообщение: «Ваша запись перенесена» с новым временем.</p>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Перенести</button>
+        <button class="btn" type="button" data-dialog-close>Отмена</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+    </form>
+  </dialog>

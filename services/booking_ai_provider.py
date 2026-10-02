@@ -16,7 +16,14 @@ from datetime import UTC, date, datetime, time, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ai.booking import BookableService, BookingKind, BookingRequest, MasterWindows, SlotOption
+from ai.booking import (
+    BookableService,
+    BookingKind,
+    BookingRequest,
+    ClientBooking,
+    MasterWindows,
+    SlotOption,
+)
 from models import AiResponse, Booking, BookingSource, Business, Master, Message, Service
 from services import booking_service, master_service, schedule_service
 
@@ -191,7 +198,115 @@ class DbScheduleProvider:
             BookingKind.OFFER.value,
             BookingKind.ASK_SERVICE.value,
             BookingKind.WINDOWS.value,
+            BookingKind.CHANGE_CHOOSE.value,
+            BookingKind.CANCEL_ASK.value,
+            BookingKind.MOVE_ASK.value,
         )
+
+    # -- запись клиента: отмена и перенос в чате (решение 2026-10-01) -------- #
+    def _client_booking_rows(self) -> list[Booking]:
+        if self._customer_id is None:
+            return []
+        return list(
+            self._db.scalars(
+                select(Booking)
+                .where(
+                    Booking.business_id == self._business_id,
+                    Booking.customer_id == self._customer_id,
+                    Booking.status.in_(booking_service.ACTIVE),
+                    Booking.starts_at > datetime.now(UTC),
+                )
+                .order_by(Booking.starts_at)
+                .limit(5)
+            )
+        )
+
+    def client_bookings(self) -> list[ClientBooking]:
+        names = dict(self.masters())
+        services = {
+            s.id: s.name
+            for s in self._db.scalars(
+                select(Service).where(Service.business_id == self._business_id)
+            )
+        }
+        result = []
+        for b in self._client_booking_rows():
+            starts = b.starts_at if b.starts_at.tzinfo else b.starts_at.replace(tzinfo=UTC)
+            result.append(
+                ClientBooking(
+                    id=b.id,
+                    service_id=b.service_id,
+                    service_name=services.get(b.service_id or 0, "услуга"),
+                    master_id=b.master_id,
+                    master_name=names.get(b.master_id, "—"),
+                    local_start=starts.astimezone(self._tz).replace(tzinfo=None),
+                )
+            )
+        return result
+
+    def last_change(self) -> tuple[BookingKind, str, int | None, list[int], date | None] | None:
+        booking = self._last_booking_details()
+        if not booking or booking.get("kind") not in (
+            BookingKind.CHANGE_CHOOSE.value,
+            BookingKind.CANCEL_ASK.value,
+            BookingKind.MOVE_ASK.value,
+        ):
+            return None
+        change = booking.get("change")
+        if not isinstance(change, dict) or change.get("action") not in ("cancel", "move"):
+            return None
+        booking_id = change.get("booking_id")
+        options = [o for o in change.get("options") or [] if isinstance(o, int)]
+        ctx = booking.get("context")
+        day = None
+        if isinstance(ctx, dict) and ctx.get("day"):
+            try:
+                day = date.fromisoformat(ctx["day"])
+            except (TypeError, ValueError):
+                day = None
+        return (
+            BookingKind(booking["kind"]),
+            change["action"],
+            booking_id if isinstance(booking_id, int) else None,
+            options,
+            day if day and day >= self.today else None,
+        )
+
+    def _own_booking(self, booking_id: int) -> Booking | None:
+        """Запись только этого клиента и этой компании (раздел 16)."""
+        return next((b for b in self._client_booking_rows() if b.id == booking_id), None)
+
+    def cancel_booking(self, booking_id: int) -> bool:
+        booking = self._own_booking(booking_id)
+        if booking is None:
+            return False
+        if self._dry_run:
+            return True
+        try:
+            booking_service.cancel_by_client(self._db, self._business(), booking)
+        except booking_service.BookingConflict:
+            return False
+        return True
+
+    def move_booking(self, booking_id: int, master_id: int, day: date, at: time) -> bool:
+        booking = self._own_booking(booking_id)
+        master = self._db.get(Master, master_id)
+        if booking is None or master is None or master.business_id != self._business_id:
+            return False
+        starts_at = schedule_service.local_to_utc(self._business(), day, at)
+        if self._dry_run:
+            service = self._db.get(Service, booking.service_id) if booking.service_id else None
+            if service is None:
+                return False
+            free = booking_service.free_slots(
+                self._db, self._business(), service, day_from=day, day_to=day, master_id=master_id
+            )
+            return any(slot.starts_at == starts_at for slot in free)
+        try:
+            booking_service.move_by_client(self._db, self._business(), booking, master, starts_at)
+        except booking_service.BookingConflict:
+            return False
+        return True
 
     def last_context(self) -> tuple[BookingKind, BookingRequest, list[int]] | None:
         """Сказанное клиентом до списка окон / вопроса об услуге. Каждое поле

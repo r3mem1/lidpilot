@@ -968,6 +968,15 @@ check(
     and "проверит" in res.safe_reply,
     str(res.safe_reply),
 )
+from ai.booking import BookingKind as _BK  # noqa: E402
+from ai.pipeline import BOOKING_STEP as _STEPS  # noqa: E402
+
+check(
+    "у каждого шага записи есть подпись для кабинета (иначе KeyError при обработке)",
+    all(kind in _STEPS for kind in _BK),
+    str([k for k in _BK if k not in _STEPS]),
+)
+
 # Проверка сайта 2026-10-01: запись без слова «запись» (правила, без модели).
 res = AIPipeline().process("давайте завтра в 12 на стрижку", KNOW_T)
 check(
@@ -982,6 +991,12 @@ check(
     "вопрос о цене услуги не превращается в запись",
     res.classification.intent.value != "BOOKING",
     res.classification.intent.value,
+)
+price_text = (res.reply_text or res.safe_reply or "").replace(" ", " ")
+check(
+    "цена в ответе с пробелом между разрядами, как в кабинете («1 500 ₽»)",
+    "1 500 ₽" in price_text and "1500 ₽" not in price_text,
+    price_text,
 )
 first = AIPipeline().process("Хочу записаться", KNOW_T)
 dialog = [

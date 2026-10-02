@@ -529,24 +529,47 @@ def reschedule(
     master = db.get(Master, master_id or booking.master_id)
     if master is None or master.business_id != ctx.business_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Мастер не найден")
+    try:
+        return _move(
+            db, ctx.business, booking, master, starts_at, actor_user_id=ctx.user.id, now=now
+        )
+    except BookingConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    def conflict(reason: str) -> HTTPException:
-        db.rollback()
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
 
+def _move(
+    db: Session,
+    business: Business,
+    booking: Booking,
+    master: Master,
+    starts_at: datetime,
+    *,
+    actor_user_id: int | None,
+    now: datetime | None = None,
+) -> Booking:
+    """Перенос записи. actor_user_id=None — перенёс сам клиент в чате (решение
+    2026-10-01): статус сохраняется (бронь ассистента подтверждает человек),
+    мастер получает «Клиент перенёс запись». BookingConflict — время нельзя."""
+    if booking.status not in ACTIVE:
+        raise BookingConflict("Запись уже не активна")
     old_start, old_master_id = _aware(booking.starts_at), booking.master_id
     starts_at = _aware(starts_at).astimezone(UTC)
     ends_at = starts_at + (_aware(booking.ends_at) - old_start)
+
+    def conflict(reason: str) -> BookingConflict:
+        db.rollback()
+        return BookingConflict(reason)
+
     if not master.active:
         raise conflict("Мастер не принимает записи")
     if booking.service_id is not None and booking.service_id not in _allowed_service_ids(
-        db, master, ctx.business_id
+        db, master, business.id
     ):
         raise conflict("Мастер не выполняет эту услугу")
     if starts_at < (now or utcnow()):
         raise conflict("Время уже прошло")
     db.execute(update(Master).where(Master.id == master.id).values(active=Master.active))
-    if not _inside_shift(db, ctx.business, master.id, starts_at, ends_at):
+    if not _inside_shift(db, business, master.id, starts_at, ends_at):
         raise conflict("Время вне смены мастера")
     clash = db.scalar(
         select(Booking.id).where(
@@ -560,37 +583,77 @@ def reschedule(
     if clash is not None:
         raise conflict("Это время уже занято")
 
+    by_client = actor_user_id is None
     # Прежний мастер узнаёт, что запись ушла к другому (уведомление по старым данным).
     after = _fire(db, booking, "moved_away") if master.id != old_master_id else []
     booking.master_id = master.id
     booking.starts_at = starts_at
     booking.ends_at = ends_at
-    booking.status = BookingStatus.CONFIRMED
-    booking.decided_by_user_id = ctx.user.id
-    if booking.conversation_id is not None:
-        conversation = db.get(Conversation, booking.conversation_id)
-        if conversation is not None and conversation.attention_reason == "BOOKING_PENDING":
-            conversation.status = ConversationStatus.OPEN
-            conversation.attention_reason = None
-    tz = schedule_service.business_tz(ctx.business)
+    # Новое время — напоминания клиенту отправятся заново.
+    booking.reminded_day_at = None
+    booking.reminded_soon_at = None
+    if not by_client:
+        booking.status = BookingStatus.CONFIRMED
+        booking.decided_by_user_id = actor_user_id
+        if booking.conversation_id is not None:
+            conversation = db.get(Conversation, booking.conversation_id)
+            if conversation is not None and conversation.attention_reason == "BOOKING_PENDING":
+                conversation.status = ConversationStatus.OPEN
+                conversation.attention_reason = None
+    tz = schedule_service.business_tz(business)
     audit_service.log_event(
         db,
         event_type=audit_service.EventType.BOOKING_RESCHEDULED,
         message=(
-            f"Запись #{booking.id} перенесена: {old_start.astimezone(tz):%d.%m %H:%M} → "
+            f"Запись #{booking.id} перенесена{' клиентом' if by_client else ''}: "
+            f"{old_start.astimezone(tz):%d.%m %H:%M} → "
             f"{starts_at.astimezone(tz):%d.%m %H:%M}, мастер «{master.display_name}»"
         ),
-        business_id=ctx.business_id,
-        actor_user_id=ctx.user.id,
+        business_id=business.id,
+        actor_user_id=actor_user_id,
         payload={
             "booking_id": booking.id,
             "from": old_start.isoformat(),
             "to": starts_at.isoformat(),
             "from_master_id": old_master_id,
             "to_master_id": master.id,
+            "by_client": by_client,
         },
     )
-    after += _fire(db, booking, "rescheduled")
+    after += _fire(db, booking, "rescheduled_by_client" if by_client else "rescheduled")
+    db.commit()
+    _run_after_commit(after)
+    db.refresh(booking)
+    return booking
+
+
+def move_by_client(
+    db: Session, business: Business, booking: Booking, master: Master, starts_at: datetime
+) -> Booking:
+    """Клиент сам перенёс свою запись в чате (решение 2026-10-01)."""
+    return _move(db, business, booking, master, starts_at, actor_user_id=None)
+
+
+def cancel_by_client(db: Session, business: Business, booking: Booking) -> Booking:
+    """Клиент сам отменил свою запись в чате (решение 2026-10-01): ответ ему даёт
+    бот, мастер получает «Клиент отменил запись»."""
+    if booking.business_id != business.id or booking.status not in ACTIVE:
+        raise BookingConflict("Запись уже не активна")
+    previous = booking.status
+    booking.status = BookingStatus.CANCELLED
+    audit_service.log_event(
+        db,
+        event_type=audit_service.EventType.BOOKING_CANCELLED,
+        message=f"Запись #{booking.id}: {previous.value} → CANCELLED (отменил клиент)",
+        business_id=business.id,
+        payload={
+            "booking_id": booking.id,
+            "from": previous.value,
+            "to": "CANCELLED",
+            "by_client": True,
+        },
+    )
+    after = _fire(db, booking, "cancelled_by_client")
     db.commit()
     _run_after_commit(after)
     db.refresh(booking)

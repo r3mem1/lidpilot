@@ -5,12 +5,71 @@
   <div>
     <h1>{{ m.customer_name(customer) }}</h1>
     <p>
-      {% if customer.username %}@{{ customer.username }}. {% endif %}Клиент с <span>{{ m.time(customer.created_at) }}</span>.
+      {% if customer.phone %}<a href="tel:{{ customer.phone }}">{{ format_phone(customer.phone) }}</a> · {% endif %}
+      {% if customer.username %}@{{ customer.username }} · {% endif %}{{ label('channel', customer.channel) }} · клиент с <span>{{ m.time(customer.created_at) }}</span>{% if visits %} · визитов: {{ visits }}{% endif %}.
       {% if customer.channel_blocked %}<span class="tag tag--attention">Заблокировал бота</span>{% endif %}
     </p>
   </div>
   <div class="actions"><a class="btn" href="/cabinet/{{ business_id }}/customers">Все клиенты</a></div>
 </header>
+
+<div class="grid grid--2">
+  <section class="sheet">
+    <div class="sheet-head"><h2>Контакты</h2>{% if not customer.phone %}<span class="tag tag--warm">нет телефона</span>{% endif %}</div>
+    {% if can_edit %}
+      <form class="sheet-body" data-api-form data-method="PATCH" data-url="/customers/{{ customer.id }}" data-success="reload" novalidate>
+        <div class="form-row">
+          <div class="field">
+            <label for="cu-name">Имя</label>
+            <input class="input" id="cu-name" name="contact_name" maxlength="255" value="{{ customer.contact_name or '' }}" placeholder="{{ customer.name or 'Как зовут клиента' }}">
+          </div>
+          <div class="field">
+            <label for="cu-phone">Телефон</label>
+            <input class="input" id="cu-phone" name="phone" type="tel" maxlength="50" value="{{ format_phone(customer.phone) }}" placeholder="+7 900 123-45-67">
+          </div>
+        </div>
+        <div class="field">
+          <label for="cu-notes">Заметка</label>
+          <textarea class="textarea" id="cu-notes" name="notes" rows="3" maxlength="2000" placeholder="Например: стрижёт только у Ивана, любит короткие виски">{{ customer.notes or '' }}</textarea>
+          <span class="hint">Видят сотрудники компании, клиенту не показывается.</span>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Сохранить</button>
+          <span class="form-status" data-status role="status"></span>
+        </div>
+      </form>
+    {% else %}
+      <div class="sheet-body">
+        <p>Имя: {{ m.customer_name(customer) }}</p>
+        <p>Телефон: {% if customer.phone %}<a href="tel:{{ customer.phone }}">{{ format_phone(customer.phone) }}</a>{% else %}—{% endif %}</p>
+        {% if customer.notes %}<p class="muted">{{ customer.notes }}</p>{% endif %}
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head"><h2>Записи</h2></div>
+    <div class="sheet-body">
+      {% if upcoming %}
+        <ul class="slot-list">
+          {% for it in upcoming %}
+            <li><strong>{{ it.local.strftime('%d.%m %H:%M') }}</strong> {{ it.service }} · {{ it.master }} · <span class="tag{% if it.booking.status.value == 'PENDING' %} tag--warm{% else %} tag--ok{% endif %}">{{ label('booking_status', it.booking.status) }}</span></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">Предстоящих записей нет.</p>
+      {% endif %}
+      {% if past %}
+        <h3 class="muted">Прошедшие и отменённые</h3>
+        <ul class="slot-list">
+          {% for it in past %}
+            <li>{{ it.local.strftime('%d.%m.%Y %H:%M') }} {{ it.service }} · {{ it.master }} · {{ label('booking_status', it.booking.status) }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </section>
+</div>
 
 <section class="sheet">
   <div class="sheet-head"><h2>История обращений</h2></div>

@@ -79,7 +79,8 @@
         {% if master.notify_chat_id %}<span class="tag tag--ok">уведомления: {{ label('channel', master.notify_channel) }}</span>{% endif %}
         <span class="row-actions">
           <button class="btn btn--small" type="button" data-api-click data-url="/masters/{{ master.id }}" data-method="PUT"
-                  data-body='{"active": {{ 'false' if master.active else 'true' }}}' data-success="reload">{{ 'Не принимает записи' if master.active else 'Принимает записи' }}</button>
+                  data-body='{"active": {{ 'false' if master.active else 'true' }}}' data-success="reload"
+                  title="{{ 'Ассистент перестанет записывать к этому мастеру' if master.active else 'Ассистент снова будет записывать к этому мастеру' }}">{{ 'Снять с записи' if master.active else 'Вернуть к записи' }}</button>
           <button class="btn btn--small btn--danger" type="button" data-api-click data-url="/masters/{{ master.id }}" data-method="DELETE"
                   data-confirm="Удалить мастера «{{ master.display_name }}» вместе с его сменами?" data-confirm-ok="Удалить" data-success="reload">Удалить</button>
         </span>

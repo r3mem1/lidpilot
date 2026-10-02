@@ -60,7 +60,7 @@ LATE_RE = re.compile(
 DISCOUNT_RE = re.compile(r"скидк|акци|промокод|дешевле|студенч|пенсионер|льгот", re.IGNORECASE)
 
 
-def _money(value: Decimal) -> str:
+def format_money(value: Decimal) -> str:
     """1500 → «1 500 ₽», 1500.5 → «1 500,50 ₽» (неразрывные пробелы)."""
     amount = Decimal(str(value))
     text = f"{amount:,.2f}" if amount != amount.to_integral_value() else f"{amount:,.0f}"
@@ -71,7 +71,7 @@ def _money(value: Decimal) -> str:
 
 def _service_line(service: ServiceInfo) -> str:
     duration = f", {service.duration} мин" if service.duration else ""
-    return f"«{service.name}» — {_money(service.price)}{duration}"
+    return f"«{service.name}» — {format_money(service.price)}{duration}"
 
 
 def discount_question(text: str, knowledge: BusinessKnowledge) -> bool:

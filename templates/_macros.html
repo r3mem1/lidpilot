@@ -22,7 +22,7 @@
 {%- endmacro %}
 
 {% macro customer_name(customer) -%}
-  {{ customer.name or (('@' ~ customer.username) if customer.username else 'Клиент без имени') }}
+  {{ customer.contact_name or customer.name or (('@' ~ customer.username) if customer.username else 'Клиент без имени') }}
 {%- endmacro %}
 
 {# Строка диалога: слева кромка приоритета, справа имя, последнее сообщение и метки. #}

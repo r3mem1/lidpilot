@@ -17,6 +17,7 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from ai.contacts import format_phone
 from cabinet_labels import LABELS
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -105,7 +106,16 @@ def asset(path: str) -> str:
     return f"/static/{path}?v={version}"
 
 
+def quoted(name: str | None) -> str:
+    """«Название» в кавычках — если в нём уже есть «», без вторых: не
+    «Барбершоп «Борода»», а Барбершоп «Борода»."""
+    text = (name or "").strip()
+    return text if "«" in text or '"' in text else f"«{text}»"
+
+
 templates.env.globals["asset"] = asset
+templates.env.globals["quoted"] = quoted
+templates.env.globals["format_phone"] = format_phone
 templates.env.filters["pretty_json"] = pretty_json
 templates.env.filters["reason"] = clean_reason
 templates.env.filters["dt"] = format_dt

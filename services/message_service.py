@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -35,6 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from ai.booking import BookingKind, format_when
+from ai.contacts import Contact
 from ai.context import HistoryRole, HistoryTurn
 from ai.pipeline import (
     REPLY_RECEIVED,
@@ -74,6 +75,7 @@ from services import (
     booking_ai_provider,
     booking_request_service,
     booking_service,
+    business_service,
     integration_service,
     lead_service,
     schedule_service,
@@ -614,14 +616,27 @@ def _run(db: Session, message_id: int) -> None:
 
     # process_message освобождает транзакцию перед обращением к LLM (commit),
     # поэтому объекты ниже перечитываются из БД.
+    # Решение 2026-10-01: телефона клиента нет — после брони AI попросит имя и номер.
+    knowledge = replace(
+        business_service.build_ai_context(db, business), customer_has_phone=bool(customer.phone)
+    )
     result = ai_service.process_message(
-        db, business, ai_text, history, log_context=log_context, schedule=schedule
+        db,
+        business,
+        ai_text,
+        history,
+        knowledge=knowledge,
+        log_context=log_context,
+        schedule=schedule,
     )
 
     message = db.get(Message, message_id)
     conversation = db.get(Conversation, conversation_id)
     if message is None or conversation is None:
         raise RuntimeError("Сообщение или диалог исчезли во время обработки")
+
+    if result.contact is not None:
+        _save_contact(db, business_id, conversation.customer_id, result.contact)
 
     classification = result.classification
     message.intent = classification.intent.value
@@ -1149,6 +1164,13 @@ def list_customers(
             pattern = f"%{escaped}%"
             conditions.append(Customer.name.ilike(pattern, escape="\\"))
             conditions.append(Customer.username.ilike(pattern, escape="\\"))
+            conditions.append(Customer.contact_name.ilike(pattern, escape="\\"))
+        # Поиск по телефону (решение 2026-10-01): цифры номера, «8…» = «+7…».
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if len(digits) >= 4:
+            if len(digits) == 11 and digits[0] == "8":
+                digits = "7" + digits[1:]
+            conditions.append(Customer.phone.contains(digits))
         stmt = stmt.where(or_(*conditions))
     rows = db.execute(
         stmt.order_by(func.max(Conversation.updated_at).desc(), Customer.id.desc())
@@ -1221,7 +1243,40 @@ def set_customer_channel_blocked(
 # --------------------------------------------------------------------------- #
 # Решение по брони → сообщение клиенту (вне ТЗ, §22)
 # --------------------------------------------------------------------------- #
+def _save_contact(db: Session, business_id: int, customer_id: int, contact: Contact) -> None:
+    """Имя и телефон, которые клиент написал сам (ai/contacts.py разобрал текст),
+    — в карточку клиента; имя — и в его активные записи (видно мастеру)."""
+    customer = db.get(Customer, customer_id)
+    if customer is None or customer.business_id != business_id:
+        return
+    if contact.phone:
+        customer.phone = contact.phone
+    if contact.name:
+        customer.contact_name = contact.name
+        for booking in db.scalars(
+            select(Booking).where(
+                Booking.customer_id == customer.id,
+                Booking.status.in_(booking_service.ACTIVE),
+            )
+        ):
+            booking.client_name = contact.name
+    audit_service.log_event(
+        db,
+        event_type=audit_service.EventType.CUSTOMER_CONTACT_SAVED,
+        message="Клиент оставил контакты",
+        business_id=business_id,
+        payload={
+            "customer_id": customer.id,
+            "name": bool(contact.name),
+            "phone": bool(contact.phone),
+        },
+    )
+
+
 def _client_name(customer: Customer) -> str:
+    # Имя, которым клиент представился, точнее ника из канала.
+    if customer.contact_name:
+        return customer.contact_name
     if customer.name:
         return customer.name
     return f"@{customer.username}" if customer.username else "Клиент"

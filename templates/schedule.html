@@ -69,7 +69,7 @@
 {% if editable_masters %}
   <section class="sheet">
     <div class="sheet-head"><h2>Добавить смену</h2></div>
-    <form class="sheet-body" data-api-form data-method="POST" data-url="/masters/{master_id}/shifts" data-success="reload" novalidate>
+    <form class="sheet-body" data-api-form data-method="POST" data-url="/masters/{master_id}/shifts" data-success="reload" data-remember="master_id,day,start_time,end_time" novalidate>
       <div class="form-row form-row--4">
         {% if editable_masters|length > 1 %}
           <div class="field">
@@ -100,6 +100,57 @@
       </div>
       <p class="hint">В один день можно добавить несколько смен — например, до и после перерыва.</p>
     </form>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-head"><h2>Повторять смены</h2></div>
+    <form class="sheet-body" data-api-form data-method="POST" data-url="/masters/{master_id}/shifts/fill" data-success="reload" data-summary="Смены добавлены: {created}. Пропущено (уже были): {skipped}." novalidate>
+      <div class="form-row form-row--4">
+        {% if editable_masters|length > 1 %}
+          <div class="field">
+            <label for="fill-master">Мастер</label>
+            <select class="select" id="fill-master" name="master_id" required>
+              {% for m in editable_masters %}<option value="{{ m.id }}">{{ m.display_name }}</option>{% endfor %}
+            </select>
+          </div>
+        {% else %}
+          <input type="hidden" name="master_id" value="{{ editable_masters[0].id }}">
+        {% endif %}
+        <div class="field">
+          <label for="fill-from">С даты</label>
+          <input class="input" id="fill-from" name="date_from" type="date" required value="{{ today.isoformat() }}">
+        </div>
+        <div class="field">
+          <label for="fill-to">По дату</label>
+          <input class="input" id="fill-to" name="date_to" type="date" required value="{{ (today + fill_days).isoformat() }}">
+        </div>
+        <div class="field">
+          <label for="fill-start">Время</label>
+          <div class="form-row">
+            <input class="input" id="fill-start" name="start_time" type="time" required value="10:00" step="900" aria-label="С">
+            <input class="input" name="end_time" type="time" required value="20:00" step="900" aria-label="До">
+          </div>
+        </div>
+      </div>
+      <fieldset class="checks">
+        <legend>Дни недели</legend>
+        {% for name in ('пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс') %}
+          <label class="check"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" data-list{% if loop.index0 < 5 %} checked{% endif %}> {{ name }}</label>
+        {% endfor %}
+      </fieldset>
+      <div class="form-actions">
+        <button class="btn btn--primary" type="submit">Заполнить расписание</button>
+        <span class="form-status" data-status role="status"></span>
+      </div>
+      <p class="hint">Дни, где у мастера уже есть смена в это время, не меняются. Период — до двух месяцев.</p>
+    </form>
+    <div class="sheet-body">
+      <p>Или скопируйте смены показанной недели ({{ days[0][0].strftime('%d.%m') }} — {{ days[-1][0].strftime('%d.%m') }}) вперёд:</p>
+      <div class="form-actions">
+        <button class="btn" type="button" data-api-click data-url="/businesses/{{ business_id }}/shifts/copy-week" data-method="POST" data-body='{"week": "{{ days[0][0].isoformat() }}", "weeks": 1}' data-success="reload" data-summary="Скопировано смен: {created}. Пропущено (уже были): {skipped}.">На следующую неделю</button>
+        <button class="btn" type="button" data-api-click data-url="/businesses/{{ business_id }}/shifts/copy-week" data-method="POST" data-body='{"week": "{{ days[0][0].isoformat() }}", "weeks": 4}' data-success="reload" data-summary="Скопировано смен: {created}. Пропущено (уже были): {skipped}.">На 4 недели вперёд</button>
+      </div>
+    </div>
   </section>
 {% endif %}
 {% endblock %}

@@ -22,6 +22,7 @@ from decimal import Decimal, InvalidOperation
 
 from ai.classifier import Classification, Intent
 from ai.context import BusinessKnowledge, HistoryTurn, ServiceInfo
+from ai.faq import format_money
 from ai.llm_client import LLMClient, LLMInvalidResponse
 from ai.prompts import RESPONDER_PROMPT_VERSION, build_responder_messages
 from config import settings
@@ -145,7 +146,7 @@ class Responder:
         if classification.intent is Intent.PRICE:
             matched = _match_services(text, knowledge) or list(knowledge.services)
             if matched and len(matched) <= 5:
-                listing = ", ".join(f"{s.name} — {s.price:.0f} ₽" for s in matched)
+                listing = ", ".join(f"{s.name} — {format_money(s.price)}" for s in matched)
                 reply = f"Актуальные цены: {listing}. Подскажите, что вас интересует?"
                 used_prices = tuple(s.price for s in matched)
                 needs_manager = False

@@ -228,6 +228,10 @@ class Business(Base):
     slot_step_minutes: Mapped[int] = mapped_column(
         Integer, nullable=False, default=30, server_default="30"
     )
+    # Решение 2026-10-01: напоминать клиентам о записи за сутки и за 2 часа.
+    reminders_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -521,6 +525,11 @@ class Customer(Base):
     name: Mapped[str | None] = mapped_column(String(255))
     username: Mapped[str | None] = mapped_column(String(120))
     phone: Mapped[str | None] = mapped_column(String(50))
+    # Вне ТЗ (§22), решение 2026-10-01: имя, которым клиент представился (или которое
+    # записал администратор); name — имя из канала, обновляется при каждом сообщении.
+    contact_name: Mapped[str | None] = mapped_column(String(255))
+    # Заметка администратора о клиенте («любит короткие стрижки», «аллергия на …»).
+    notes: Mapped[str | None] = mapped_column(Text)
     # Клиент заблокировал бота (Telegram 403): отправка бессмысленна, нужен менеджер.
     channel_blocked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -829,6 +838,9 @@ class Booking(Base):
     decided_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    # Напоминания клиенту (решение 2026-10-01): когда отправлены; перенос сбрасывает.
+    reminded_day_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reminded_soon_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )

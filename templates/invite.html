@@ -7,7 +7,7 @@
       <p class="muted">Ссылка устарела, была отозвана или уже использована. Попросите владельца компании создать новое приглашение.</p>
       <div class="form-actions"><a class="btn" href="/cabinet">Перейти в кабинет</a></div>
     {% else %}
-      <h1>Приглашение в «{{ business.name }}»</h1>
+      <h1>Приглашение в {{ quoted(business.name) }}</h1>
       <p>Вас приглашают в команду с ролью <strong>{{ label('role', invitation.role) }}</strong>. Приглашение выдано на адрес <strong>{{ invitation.email }}</strong>.</p>
 
       {% if not user %}

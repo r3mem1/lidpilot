@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai.booking import format_when
+from ai.contacts import format_phone
 from config import settings
 from database import SessionLocal
 from integrations.base import ChannelError, IncomingMessage
@@ -36,6 +37,7 @@ from models import (
     BookingSource,
     Business,
     Channel,
+    Customer,
     Integration,
     LogLevel,
     Master,
@@ -300,6 +302,8 @@ _TITLES = {
     "cancelled": "Запись отменена",
     "rescheduled": "Запись перенесена",
     "moved_away": "Запись перенесена к другому мастеру",
+    "rescheduled_by_client": "Клиент перенёс запись",
+    "cancelled_by_client": "Клиент отменил запись",
 }
 
 
@@ -316,8 +320,10 @@ def _booking_notice(db: Session, booking: Booking, event: str) -> Callable[[], N
     tz = schedule_service.business_tz(business)
     local = _aware(booking.starts_at).astimezone(tz)  # type: ignore[union-attr]
     service = db.get(Service, booking.service_id) if booking.service_id else None
+    customer = db.get(Customer, booking.customer_id) if booking.customer_id else None
+    phone = f", {format_phone(customer.phone)}" if customer and customer.phone else ""
     text = (
-        f"{title}: «{service.name if service else 'услуга'}», {booking.client_name}, "
+        f"{title}: «{service.name if service else 'услуга'}», {booking.client_name}{phone}, "
         f"{format_when(local, datetime.now(tz).date())}."
     )
     notification_id = _enqueue(db, master, text)
